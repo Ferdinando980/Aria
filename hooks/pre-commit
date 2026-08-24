@@ -1,0 +1,24 @@
+#!/bin/sh
+# Runs on every commit in this repo (enabled via `git config core.hooksPath hooks`).
+# Versioned here, not in .git/hooks/, so it's not lost on a fresh clone.
+#
+# 1. Regenerates README.md's "ogni superficie AI dell'app" domain list from
+#    the real SkillDomain type + DOMAIN_LABEL map (scripts/readme_update.mjs)
+#    -- that exact list went stale for real once already (2026-08-21, three
+#    unrouted Gemini call sites found only by grepping the codebase by hand).
+#    A parse failure here is treated as real (set -e): it means the source
+#    shape changed and the script needs a human to fix it, not a silently
+#    skipped check.
+# 2. Warns (never blocks) about cognitive_rpg <-> Jarvis mirror drift via
+#    tools/mirror_drift.py --warn-only -- a fragile-by-construction signal
+#    (file mtime via git commit time) that flags, never gates.
+set -e
+
+node scripts/readme_update.mjs
+git add README.md
+
+set +e
+PYTHON="../.venv/Scripts/python.exe"
+if [ ! -x "$PYTHON" ]; then PYTHON="python"; fi
+"$PYTHON" ../tools/mirror_drift.py --warn-only
+exit 0
