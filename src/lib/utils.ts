@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
+import type { MaterialChapter } from './types'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -107,6 +108,30 @@ export function distributeByWeight(weights: number[], days: number, startOffsetD
     dayLoad += w
   }
   return dates
+}
+
+/** The real page range a StudyPlanChapter was generated from, looked up in
+ * the real MaterialChapter/ChapterSection it's linked to (2026-08-24, real
+ * user request: "vorrei che dividesse il numero di pagine da studiare per
+ * ciascuna [giornata]... oggi ho fatto 10-15 pagine, domani 20-25"). Returns
+ * undefined for a chapter with no materialChapterId (the whole-material
+ * fallback used when a material has no detected chapters yet, see
+ * materialContent.ts's buildStudyPlanChapterInputs) or one whose linked
+ * chapter/section has since been deleted -- no invented range, same
+ * philosophy as dueDate staying undefined with no known exam date. */
+export function chapterPageRange(
+  materialChapterId: string | undefined,
+  materialSectionId: string | undefined,
+  allChapters: MaterialChapter[],
+): { start: number; end: number } | undefined {
+  if (!materialChapterId) return undefined
+  const chapter = allChapters.find((c) => c.id === materialChapterId)
+  if (!chapter) return undefined
+  if (materialSectionId) {
+    const section = chapter.subsections.find((s) => s.id === materialSectionId)
+    if (section) return { start: section.startPage, end: section.endPage }
+  }
+  return { start: chapter.startPage, end: chapter.endPage }
 }
 
 export function distributeAcrossDays(count: number, days: number, startOffsetDays = 0): string[] {

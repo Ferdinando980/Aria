@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom'
 import { useToastStore } from '../../store/toastStore'
 import { generateStudyPlan, reflectOnStudyPlan, hasGeminiKey, GEMINI_MODEL } from '../../lib/gemini'
 import { buildStudyPlanChapterInputs, isViewableInline } from '../../lib/materialContent'
-import { uid, cn, daysUntilNextExam, nextExamEvent, distributeByWeight } from '../../lib/utils'
+import { uid, cn, daysUntilNextExam, nextExamEvent, distributeByWeight, chapterPageRange } from '../../lib/utils'
 import { routeSkills, skillsAsPromptContext, tagsFromText } from '../../lib/skills'
 import { enforceSkillBudget } from '../../lib/contextBudget'
 import { MarkdownLite } from '../shared/MarkdownLite'
@@ -146,18 +146,32 @@ export function MaterialPlanPanel({ material, onClose }: { material: Material; o
         return
       }
       setStudyPlanCallEvent(planKey, callEvent.id)
-      // Day-by-day schedule (2026-08-24): weighted by the model's own real
-      // DURATA estimate per chapter (see distributeByWeight's comment for
-      // why that's the chosen difficulty/density proxy), spread evenly
-      // across a chapter's own steps and bin-packed across ALL steps in
-      // chapter order (not per-chapter independently) so early chapters
-      // don't all land on day 1 while later ones get crammed. Falls back to
-      // an even per-step weight (1) when a chapter's DURATA didn't parse --
-      // graceful degrade to the old even-split behavior, not a crash. No
-      // dueDate at all when examDaysLeft is undefined (see StudyPlanItem's
-      // comment).
+      // Day-by-day schedule (2026-08-24): weighted by real PAGE COUNT where
+      // known (chapterPageRange, from the real MaterialChapter/ChapterSection
+      // this StudyPlanChapter was generated from) -- real user request
+      // "vorrei che dividesse il numero di pagine da studiare per ciascuna
+      // [giornata]... oggi ho fatto 10-15 pagine, domani 20-25" needs day
+      // boundaries that actually track page count, not just an estimate that
+      // happens to correlate with it. Falls back to the model's own DURATA
+      // estimate per chapter (see distributeByWeight's comment) when a
+      // chapter has no detected page range -- the whole-material fallback
+      // case (materialContent.ts's buildStudyPlanChapterInputs), not common
+      // but real -- and to an even per-step weight (1) if DURATA didn't
+      // parse either. Spread evenly across a chapter's own steps and
+      // bin-packed across ALL steps in chapter order (not per-chapter
+      // independently) so early chapters don't all land on day 1 while later
+      // ones get crammed -- this also means a chapter straddling a day
+      // boundary gets its steps split roughly in proportion to its own page
+      // count, not an arbitrary cut. No dueDate at all when examDaysLeft is
+      // undefined (see StudyPlanItem's comment).
       const weights = chapters.flatMap((c) => {
-        const perStep = c.estimatedMinutes && c.steps.length > 0 ? c.estimatedMinutes / c.steps.length : 1
+        if (c.steps.length === 0) return []
+        const pages = chapterPageRange(c.materialChapterId, c.materialSectionId, allChapters)
+        const perStep = pages
+          ? (pages.end - pages.start + 1) / c.steps.length
+          : c.estimatedMinutes
+            ? c.estimatedMinutes / c.steps.length
+            : 1
         return c.steps.map(() => perStep)
       })
       // "Giornate di revisione" (2026-08-24 roadmap): with enough runway,
@@ -184,6 +198,7 @@ export function MaterialPlanPanel({ material, onClose }: { material: Material; o
         planKey,
         chapters.map((c) => {
           const perStep = c.estimatedMinutes && c.steps.length > 0 ? Math.round(c.estimatedMinutes / c.steps.length) : undefined
+          const pageRange = chapterPageRange(c.materialChapterId, c.materialSectionId, allChapters)
           return {
             id: uid(),
             title: c.title,
@@ -199,10 +214,10 @@ export function MaterialPlanPanel({ material, onClose }: { material: Material; o
               // title) instead of creating a duplicate every time.
               let taskId = prior?.taskId
               if (dueDate) {
-                if (taskId) updateTask(taskId, { title, dueDate, estimateMinutes: perStep, subjectId: material.subjectId })
-                else taskId = addTask({ subjectId: material.subjectId, title, dueDate, estimateMinutes: perStep, priority: 'media' }).id
+                if (taskId) updateTask(taskId, { title, dueDate, estimateMinutes: perStep, subjectId: material.subjectId, pageRange })
+                else taskId = addTask({ subjectId: material.subjectId, title, dueDate, estimateMinutes: perStep, priority: 'media', pageRange }).id
               }
-              return { id: uid(), title, done: prior?.done ?? false, addedAsTask: prior?.addedAsTask ?? !!taskId, dueDate, taskId }
+              return { id: uid(), title, done: prior?.done ?? false, addedAsTask: prior?.addedAsTask ?? !!taskId, dueDate, taskId, pageRange }
             }),
             quiz: c.quiz.map((question) => ({ id: uid(), question })),
             materialChapterId: c.materialChapterId,
@@ -368,6 +383,9 @@ export function MaterialPlanPanel({ material, onClose }: { material: Material; o
               const linkedSummary = chapter.materialChapterId
                 ? summaries.find((s) => s.chapterId === chapter.materialChapterId && s.sectionId === chapter.materialSectionId)
                 : undefined
+              // Same range for every item in this chapter -- shown once here,
+              // not per-item below (see Task.pageRange's comment).
+              const pageRange = chapterPageRange(chapter.materialChapterId, chapter.materialSectionId, allChapters)
               return (
                 <div key={chapter.id} className="overflow-hidden rounded-xl border border-[var(--color-border)]">
                   <button onClick={() => toggleChapterOpen(chapter.id)} className="flex w-full items-start justify-between gap-2 p-3 text-left">
@@ -376,6 +394,7 @@ export function MaterialPlanPanel({ material, onClose }: { material: Material; o
                       {chapter.summary && <p className="mt-0.5 line-clamp-2 text-xs text-[var(--color-ink-muted)]">{chapter.summary}</p>}
                       <p className="mt-1 text-[11px] text-[var(--color-ink-muted)]">
                         {done}/{chapter.items.length} passi{chapter.estimatedMinutes ? ` · ~${chapter.estimatedMinutes} min` : ''}
+                        {pageRange ? ` · p. ${pageRange.start}–${pageRange.end}` : ''}
                       </p>
                     </div>
                     {chapterOpen ? <ChevronUp size={14} className="mt-0.5 shrink-0 text-[var(--color-ink-muted)]" /> : <ChevronDown size={14} className="mt-0.5 shrink-0 text-[var(--color-ink-muted)]" />}

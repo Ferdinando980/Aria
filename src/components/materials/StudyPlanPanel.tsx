@@ -7,7 +7,7 @@ import { Link } from 'react-router-dom'
 import { useToastStore } from '../../store/toastStore'
 import { generateStudyPlan, reflectOnStudyPlan, hasGeminiKey, GEMINI_MODEL } from '../../lib/gemini'
 import { buildStudyPlanChapterInputs } from '../../lib/materialContent'
-import { uid, cn, daysUntilNextExam, nextExamEvent, distributeByWeight } from '../../lib/utils'
+import { uid, cn, daysUntilNextExam, nextExamEvent, distributeByWeight, chapterPageRange } from '../../lib/utils'
 import { routeSkills, skillsAsPromptContext, tagsFromText } from '../../lib/skills'
 import { enforceSkillBudget } from '../../lib/contextBudget'
 import { MarkdownLite } from '../shared/MarkdownLite'
@@ -131,12 +131,26 @@ export function StudyPlanPanel({
       }
       setStudyPlanCallEvent(subject.id, callEvent.id)
       // See MaterialPlanPanel's identical block for the full rationale
-      // (scheduling weighted by real DURATA, and the priorByTitle done-state
-      // carryover -- 2026-08-24 user reports: "il piano si perde... non
-      // essere generato di nuovo da zero ogni volta" and difficulty/density
-      // weighting for the day-by-day schedule).
+      // (scheduling weighted by real page count where known, DURATA as
+      // fallback, and the priorByTitle done-state carryover -- 2026-08-24
+      // user reports: "il piano si perde... non essere generato di nuovo da
+      // zero ogni volta", difficulty/density weighting for the day-by-day
+      // schedule, and "vorrei che dividesse il numero di pagine da studiare
+      // per ciascuna [giornata]"). Real pages take priority over the DURATA
+      // estimate as the scheduling weight -- "oggi 10-15 pagine, domani
+      // 20-25" needs the day boundaries to actually track page count, not
+      // just estimated minutes that happen to correlate with it. Falls back
+      // to DURATA per-chapter (not per-plan) when a chapter has no detected
+      // page range -- the whole-material fallback case (materialContent.ts's
+      // buildStudyPlanChapterInputs), not common but real.
       const weights = chapters.flatMap((c) => {
-        const perStep = c.estimatedMinutes && c.steps.length > 0 ? c.estimatedMinutes / c.steps.length : 1
+        if (c.steps.length === 0) return []
+        const pages = chapterPageRange(c.materialChapterId, c.materialSectionId, allChapters)
+        const perStep = pages
+          ? (pages.end - pages.start + 1) / c.steps.length
+          : c.estimatedMinutes
+            ? c.estimatedMinutes / c.steps.length
+            : 1
         return c.steps.map(() => perStep)
       })
       // See MaterialPlanPanel's identical block: reserves the last day
@@ -150,6 +164,7 @@ export function StudyPlanPanel({
         subject.id,
         chapters.map((c) => {
           const perStep = c.estimatedMinutes && c.steps.length > 0 ? Math.round(c.estimatedMinutes / c.steps.length) : undefined
+          const pageRange = chapterPageRange(c.materialChapterId, c.materialSectionId, allChapters)
           return {
             id: uid(),
             title: c.title,
@@ -167,10 +182,10 @@ export function StudyPlanPanel({
               // just below) instead of creating a duplicate every time.
               let taskId = prior?.taskId
               if (dueDate) {
-                if (taskId) updateTask(taskId, { title, dueDate, estimateMinutes: perStep, subjectId: subject.id })
-                else taskId = addTask({ subjectId: subject.id, title, dueDate, estimateMinutes: perStep, priority: 'media' }).id
+                if (taskId) updateTask(taskId, { title, dueDate, estimateMinutes: perStep, subjectId: subject.id, pageRange })
+                else taskId = addTask({ subjectId: subject.id, title, dueDate, estimateMinutes: perStep, priority: 'media', pageRange }).id
               }
-              return { id: uid(), title, done: prior?.done ?? false, addedAsTask: prior?.addedAsTask ?? !!taskId, dueDate, taskId }
+              return { id: uid(), title, done: prior?.done ?? false, addedAsTask: prior?.addedAsTask ?? !!taskId, dueDate, taskId, pageRange }
             }),
             quiz: c.quiz.map((question) => ({ id: uid(), question })),
             materialChapterId: c.materialChapterId,
@@ -320,6 +335,10 @@ export function StudyPlanPanel({
             const linkedSummary = chapter.materialChapterId
               ? summaries.find((s) => s.chapterId === chapter.materialChapterId && s.sectionId === chapter.materialSectionId)
               : undefined
+            // Same range for every item in this chapter -- shown once here,
+            // not per-item below, since repeating it per step would just be
+            // noise (see Task.pageRange's comment for the full rationale).
+            const pageRange = chapterPageRange(chapter.materialChapterId, chapter.materialSectionId, allChapters)
             return (
               <div key={chapter.id} className="overflow-hidden rounded-xl border border-[var(--color-border)]">
                 <button onClick={() => toggleChapterOpen(chapter.id)} className="flex w-full items-start justify-between gap-2 p-3 text-left">
@@ -328,6 +347,7 @@ export function StudyPlanPanel({
                     {chapter.summary && <p className="mt-0.5 line-clamp-2 text-xs text-[var(--color-ink-muted)]">{chapter.summary}</p>}
                     <p className="mt-1 text-[11px] text-[var(--color-ink-muted)]">
                       {done}/{chapter.items.length} passi{chapter.estimatedMinutes ? ` · ~${chapter.estimatedMinutes} min` : ''}
+                      {pageRange ? ` · p. ${pageRange.start}–${pageRange.end}` : ''}
                     </p>
                   </div>
                   {chapterOpen ? <ChevronUp size={14} className="mt-0.5 shrink-0 text-[var(--color-ink-muted)]" /> : <ChevronDown size={14} className="mt-0.5 shrink-0 text-[var(--color-ink-muted)]" />}

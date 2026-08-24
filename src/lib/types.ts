@@ -185,6 +185,16 @@ export interface Task {
   estimateMinutes?: number
   subtasks: SubTask[]
   createdAt: string
+  /** Real page range (from the source MaterialChapter/ChapterSection this
+   * task's study-plan step was generated from), 2026-08-24, real user
+   * request: "vorrei che dividesse il numero di pagine da studiare... oggi
+   * ho fatto 10-15 pagine, domani 20-25". Same range for every step of the
+   * same chapter -- not sliced further per step, since a step doesn't map
+   * to a specific sub-range of its own chapter's pages. Undefined for a
+   * task whose source chapter has no detected page range yet (a material
+   * with no "Rileva capitoli" run) -- no page badge shown rather than a
+   * fabricated one. See StudyPlanPanel/MaterialPlanPanel's generate(). */
+  pageRange?: { start: number; end: number }
 }
 
 export interface CalendarEvent {
@@ -254,6 +264,10 @@ export interface StudyPlanItem {
    * completion back onto the item with this id; reassignOverdueStudyPlanItems
    * moves the linked task's own dueDate along with the item's. */
   taskId?: ID
+  /** Same as Task.pageRange, mirrored here so the plan panel itself can show
+   * it without looking up the linked task (2026-08-24). See Task.pageRange
+   * for the full rationale. */
+  pageRange?: { start: number; end: number }
 }
 
 /** A short recall-practice question tied to one chapter — the "testing effect" (Roediger & Karpicke): actively

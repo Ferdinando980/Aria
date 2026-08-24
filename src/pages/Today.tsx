@@ -20,11 +20,18 @@ function isOverdue(dateStr?: string) {
 export default function Today() {
   const tasks = useAppStore((s) => s.tasks)
 
-  const { overdue, today, doneToday } = useMemo(() => {
+  const { overdue, today, doneToday, todayPageRange } = useMemo(() => {
     const overdue = tasks.filter((t) => !t.done && isOverdue(t.dueDate))
     const today = tasks.filter((t) => !t.done && isToday(t.dueDate))
     const doneToday = tasks.filter((t) => t.done && t.doneAt?.slice(0, 10) === new Date().toISOString().slice(0, 10))
-    return { overdue, today, doneToday }
+    // Real user request (2026-08-24): "oggi ho fatto 10-15 pagine, domani
+    // 20-25" -- aggregate of whichever of today's tasks actually carry a real
+    // page range (see Task.pageRange); undefined, not a guess, when none do.
+    const ranges = today.map((t) => t.pageRange).filter((r): r is NonNullable<typeof r> => !!r)
+    const todayPageRange = ranges.length > 0
+      ? { start: Math.min(...ranges.map((r) => r.start)), end: Math.max(...ranges.map((r) => r.end)) }
+      : undefined
+    return { overdue, today, doneToday, todayPageRange }
   }, [tasks])
 
   const pendingCount = overdue.length + today.length
@@ -50,7 +57,14 @@ export default function Today() {
           )}
 
           <Card>
-            <CardTitle>Oggi</CardTitle>
+            <div className="flex items-center justify-between gap-2">
+              <CardTitle>Oggi</CardTitle>
+              {todayPageRange && (
+                <span className="rounded-full bg-[var(--color-surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--color-ink-muted)]">
+                  Pagine di oggi: {todayPageRange.start}–{todayPageRange.end}
+                </span>
+              )}
+            </div>
             <div className="mt-3 flex flex-col gap-2">
               {today.length === 0 && (
                 <p className="rounded-xl bg-[var(--color-surface-2)] p-4 text-sm text-[var(--color-ink-muted)]">

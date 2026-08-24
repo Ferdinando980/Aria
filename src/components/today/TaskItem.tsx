@@ -39,6 +39,11 @@ export function TaskItem({ task }: { task: Task }) {
           <div className="flex items-center gap-2">
             <p className={cn('truncate text-sm font-medium text-[var(--color-ink)]', task.done && 'line-through')}>{task.title}</p>
             <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: priorityColor[task.priority] }} />
+            {task.pageRange && (
+              <span className="shrink-0 rounded-full bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-ink-muted)]">
+                p. {task.pageRange.start}–{task.pageRange.end}
+              </span>
+            )}
           </div>
           {task.description && <p className="mt-0.5 truncate text-xs text-[var(--color-ink-muted)]">{task.description}</p>}
 
