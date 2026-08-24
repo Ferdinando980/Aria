@@ -26,6 +26,38 @@ import type { Skill, SkillDomain, SkillEvent } from './types'
 // skills, not thousands), scoring by tag overlap is enough — no embeddings,
 // no extra API call, so retrieval itself never shows up as a hidden cost.
 
+// ---- two-stage load: metadata for ranking, content only for the selected
+// few (2026-08-24, real user request, modeled on Claude Skills' own
+// metadata-then-body pattern). Every field routeSkills()/routeMaterialKnowledge()
+// actually rank or filter on (domain, capabilityTags, status, confidence,
+// uses) already lived outside `content` -- this makes that boundary
+// explicit and enforced by the type system instead of just true by
+// convention. At today's real corpus size (tens of skills per user,
+// already narrowed to 1-2 before the prompt -- see CLAUDE.md) this doesn't
+// cut any real memory/network cost yet, since every skill already lives
+// fully in-memory in the Zustand store; it establishes the SEPARATION now,
+// cheaply, so a real lazy-fetch (e.g. a split skills_meta/skills_content
+// Supabase table, once a subject's skill count genuinely grows past
+// ~20-30) can be dropped into resolveSkillContent() alone, without
+// touching the ranking logic or any of routeSkills()'s callers.
+export type SkillMeta = Omit<Skill, 'content'>
+
+function toMeta(s: Skill): SkillMeta {
+  const { content: _content, ...meta } = s
+  return meta
+}
+
+/** Stage two: given the (already narrow, post-selection) metadata chosen by
+ * a router below, pulls each one's full content back from the real
+ * in-memory skill list. Today this is a plain Map lookup (no lazy fetch
+ * exists yet, see the block comment above) -- swapping it for a real one
+ * later touches this one function, not every routeSkills()/
+ * routeMaterialKnowledge() call site. */
+function resolveSkillContent(metas: SkillMeta[], allSkills: Skill[]): Skill[] {
+  const byId = new Map(allSkills.map((s) => [s.id, s]))
+  return metas.map((m) => byId.get(m.id)).filter((s): s is Skill => !!s)
+}
+
 export function routeSkills(
   skills: Skill[],
   domain: SkillDomain,
@@ -38,11 +70,13 @@ export function routeSkills(
 
   const tagSet = new Set(tags)
   const scored = skills
+    .map(toMeta)
     .filter((s) => s.domain === domain && s.status !== 'REJECTED')
     .map((s) => ({ skill: s, overlap: s.capabilityTags.filter((t) => tagSet.has(t)).length }))
     .filter((x) => x.overlap >= minOverlap)
   scored.sort((a, b) => b.overlap - a.overlap)
-  return scored.slice(0, maxSkills).map((x) => x.skill)
+  const selected = scored.slice(0, maxSkills).map((x) => x.skill)
+  return resolveSkillContent(selected, skills)
 }
 
 /**
@@ -69,7 +103,7 @@ const PROMOTED_STATUSES = new Set(['VERIFIED', 'PERSONAL_NOTE'])
 // built to avoid, just one level down) -- only material-wide skills
 // (chapterId AND sectionId both unset) are always relevant regardless of
 // where in the material the question falls.
-function specificityTier(s: Skill, chapterId?: string, sectionId?: string): number | null {
+function specificityTier(s: Pick<Skill, 'sectionId' | 'chapterId'>, chapterId?: string, sectionId?: string): number | null {
   if (s.sectionId) return sectionId && s.sectionId === sectionId ? 0 : null
   if (s.chapterId) return chapterId && s.chapterId === chapterId ? 1 : null
   return 2
@@ -83,9 +117,10 @@ function specificityTier(s: Skill, chapterId?: string, sectionId?: string): numb
 export function routeMaterialKnowledge(skills: Skill[], materialId: string, options: { chapterId?: string; sectionId?: string; maxSkills?: number } = {}): Skill[] {
   const { chapterId, sectionId, maxSkills = 3 } = options
   const matches = skills
+    .map(toMeta)
     .filter((s) => s.domain === 'material_knowledge' && s.materialId === materialId && s.status !== 'REJECTED')
     .map((s) => ({ skill: s, tier: specificityTier(s, chapterId, sectionId) }))
-    .filter((x): x is { skill: Skill; tier: number } => x.tier !== null)
+    .filter((x): x is { skill: SkillMeta; tier: number } => x.tier !== null)
   matches.sort((a, b) => {
     if (a.tier !== b.tier) return a.tier - b.tier
     const aPromoted = PROMOTED_STATUSES.has(a.skill.status)
@@ -94,7 +129,8 @@ export function routeMaterialKnowledge(skills: Skill[], materialId: string, opti
     if (b.skill.confidence !== a.skill.confidence) return b.skill.confidence - a.skill.confidence
     return b.skill.uses - a.skill.uses
   })
-  return matches.slice(0, maxSkills).map((x) => x.skill)
+  const selected = matches.slice(0, maxSkills).map((x) => x.skill)
+  return resolveSkillContent(selected, skills)
 }
 
 export function skillsAsPromptContext(skills: Skill[]): string {
