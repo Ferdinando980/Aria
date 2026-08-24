@@ -115,6 +115,27 @@ function isOnQuotaCooldown(model: string): boolean {
 
 let roundRobinIndex = 0
 
+// Real measurement, not assumption (2026-08-24, user request): whether
+// Gemini's IMPLICIT prompt caching is actually engaging on the repeated
+// material text sent by askAboutMaterial/generateStudyPlan every call --
+// before considering any change to how those calls are shaped, or explicit
+// (paid) caching, the only honest way to know is usageMetadata on a real
+// response. cachedContentTokenCount > 0 means it's already saving tokens
+// with zero code change; always 0 means it isn't engaging for this app's
+// real call pattern (materials opened minutes apart, not back-to-back).
+// Every one of this file's real call sites returns the same GenerateContentResult
+// shape (`.response.usageMetadata`) even though generateWithFallback's `T` is
+// generic, so a single duck-typed check here covers all of them.
+function logCacheUsage(modelName: string, result: unknown) {
+  const usage = (result as { response?: { usageMetadata?: { promptTokenCount?: number; cachedContentTokenCount?: number } } })?.response
+    ?.usageMetadata
+  if (!usage) return
+  const cached = usage.cachedContentTokenCount ?? 0
+  console.info(
+    `[gemini cache] ${modelName}: prompt=${usage.promptTokenCount ?? '?'} cached=${cached}${cached > 0 ? ' (implicit caching hit)' : ''}`,
+  )
+}
+
 /** Runs a Gemini call against GEMINI_MODEL and GEMINI_FALLBACK_MODEL, in an
  * order that alternates call-to-call (round-robin) and skips whichever one
  * most recently hit a real quota wall (isOnQuotaCooldown) as the primary
@@ -143,6 +164,7 @@ export async function generateWithFallback<T>(
       const model = genAI.getGenerativeModel({ model: modelName, ...modelConfig })
       const result = await withRetry(() => run(model))
       lastModelUsed = modelName
+      logCacheUsage(modelName, result)
       return result
     } catch (err) {
       lastErr = err
