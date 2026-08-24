@@ -92,6 +92,19 @@ Riscritta il 2026-08-24 (richiesta esplicita: "la UI della sezione flashcard mi 
 
 `Oggi` (home, con "Ripasso lampo" in cima e i task del giorno, inclusi quelli generati dal piano di studio) · `Calendario` (FullCalendar, drag&drop, mostra anche ogni Task con una data) · `Materiali` (materie → link/appunti/file con drag&drop, piano di studio AI sia per singolo file che per tutta la materia, chat AI per materiale con memoria persistente, disegno sopra il materiale) · `Aria` (chat AI generale, con allegati stile Gemini) · `Flashcard` (mazzi a tile + schermata di studio dedicata) · `Riassunti` (stesso pattern, per i riassunti generati) · `Progressi` (gamification: XP, livelli, streak) · `Impostazioni` (chiavi API, account, aggiorna app) · `/gioco` (Tetris, scheda separata).
 
+## Cache: principio permanente per ogni parte nuova (2026-08-24)
+
+Richiesta esplicita dell'utente, valida per ogni feature futura, non solo per quelle di oggi: **se una cache è utile, efficace, e non cambia il risultato, va usata** — non solo dove capita di pensarci durante un bug di performance/costo. Applicato oggi in tre punti reali (`materialFileCache.ts` per i bytes dei file su IndexedDB, `materialTextCache`/`chapterScopedPagesCache` in-memory per il testo estratto — vedi sopra) dopo la scoperta della fattura Storage Egress; da lì in poi è un principio di default, non un fix una tantum.
+
+Regola pratica per capire se una cache è sicura qui: **sì** se l'input è immutabile o cambia solo tramite un'azione esplicita e localizzabile (un file caricato una volta, un PDF sostituito da `useReplaceMaterialFile`, un materiale con un `id` stabile) — in quel caso la cache deve sempre avere un punto di invalidazione esplicito accanto all'azione che cambia l'input (mai un TTL a indovinare), come `invalidateMaterialFileCache` chiamato subito dopo un re-upload. **No** se il risultato dipende da qualcosa che cambia sotto silenziosamente (l'ora, un conteggio esterno, un altro utente) o se la "cache" nasconderebbe un bug reale invece di evitare lavoro ripetuto onestamente identico.
+
+**Cache a pagamento (es. Gemini explicit context caching, `cachedContents`) sono un'altra categoria, non coperta da questo principio**: hanno un costo ricorrente reale e separato (storage orario del contesto cache-ato), spesso richiedono un tier a fatturazione abilitata (la chiave Gemini qui è ancora sul free tier, vedi quota-exceeded più sopra), quindi vanno proposte e confermate esplicitamente caso per caso — mai aggiunte in automatico insieme alle cache gratuite solo perché "è la stessa famiglia di ottimizzazione". Deciso esplicitamente il 24/08 dopo la sorpresa di fatturazione Supabase Storage: non introdurre una seconda voce di costo variabile senza una conferma diretta.
+
+Cache gratuite (client-side/in-memory/IndexedDB) già in uso da tenere come pattern di riferimento per ogni consumatore nuovo degli stessi dati:
+- Bytes di un file materiale: sempre `getMaterialFileBlob()` (`storage.ts`), mai `getMaterialFileUrl()+fetch()` diretto — l'IndexedDB cache (`materialFileCache.ts`) evita sia la rete sia la Storage Egress a pagamento su ogni riapertura.
+- Testo estratto da un materiale: sempre `getMaterialText()` (`materialContent.ts`), mai una propria estrazione — cache in-memory per `materialId` già dentro.
+- Testo per sottosezione/capitolo: sempre `getChapterScopedText()`, già condiviso tra le chiamate concorrenti sulla stessa `Promise` cachata.
+
 ## Cose da NON fare
 
 - Non introdurre stati di "fallimento" duri (barre rosse, streak azzerate senza spiegazione, badge "mancato").

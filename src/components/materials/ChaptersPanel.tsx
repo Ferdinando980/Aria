@@ -7,7 +7,7 @@ import { useAppStore } from '../../store/useAppStore'
 import { useToastStore } from '../../store/toastStore'
 import { generateChapters, hasGeminiKey, GEMINI_MODEL } from '../../lib/gemini'
 import { extractPdfTextByPage, CHAPTER_DETECTION_OPTS } from '../../lib/materialContent'
-import { getMaterialFileUrl } from '../../lib/storage'
+import { getMaterialFileBlob } from '../../lib/storage'
 import { uid } from '../../lib/utils'
 import type { Material, ChapterSection, SkillEvent } from '../../lib/types'
 import { routeSkills, skillsAsPromptContext, tagsFromText, maybeDistillFromExchanges } from '../../lib/skills'
@@ -118,9 +118,13 @@ export function ChaptersPanel({
     setDetecting(true)
     setRemaining(null)
     try {
-      const url = fileUrl ?? (await getMaterialFileUrl(material.filePath!))
-      if (!url) throw new Error('no_url')
-      const buf = await (await fetch(url)).arrayBuffer()
+      // fileUrl (when present) is already local -- MaterialViewer resolves
+      // it to a blob: URL, itself backed by the shared cache (2026-08-24).
+      // Falling back to getMaterialFileBlob directly (not
+      // getMaterialFileUrl+fetch) so this path is cache-aware too instead
+      // of re-downloading from Storage on its own.
+      const buf = fileUrl ? await (await fetch(fileUrl)).arrayBuffer() : await (await getMaterialFileBlob(material.filePath!))?.arrayBuffer()
+      if (!buf) throw new Error('no_file')
       const { pages, truncated, totalPages } = await extractPdfTextByPage(buf, CHAPTER_DETECTION_OPTS)
       const { skillContext, callEvent } = prepareChaptersCall()
       const suggested = await generateChapters(material.title, pages, undefined, skillContext)
@@ -150,9 +154,13 @@ export function ChaptersPanel({
     if (!fileUrl && !material.filePath) return
     setDetecting(true)
     try {
-      const url = fileUrl ?? (await getMaterialFileUrl(material.filePath!))
-      if (!url) throw new Error('no_url')
-      const buf = await (await fetch(url)).arrayBuffer()
+      // fileUrl (when present) is already local -- MaterialViewer resolves
+      // it to a blob: URL, itself backed by the shared cache (2026-08-24).
+      // Falling back to getMaterialFileBlob directly (not
+      // getMaterialFileUrl+fetch) so this path is cache-aware too instead
+      // of re-downloading from Storage on its own.
+      const buf = fileUrl ? await (await fetch(fileUrl)).arrayBuffer() : await (await getMaterialFileBlob(material.filePath!))?.arrayBuffer()
+      if (!buf) throw new Error('no_file')
       const { pages, truncated, totalPages } = await extractPdfTextByPage(buf, { ...CHAPTER_DETECTION_OPTS, fromPage: remaining.fromPage })
       if (pages.length === 0) {
         setRemaining(null)

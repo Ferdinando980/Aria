@@ -1,5 +1,5 @@
 import type { ChapterSection, Material, MaterialChapter } from './types'
-import { getMaterialFileUrl } from './storage'
+import { getMaterialFileBlob } from './storage'
 import { loadPdfjs } from './pdfjs'
 
 const MAX_CHARS = 15000
@@ -8,6 +8,21 @@ async function fetchArrayBuffer(url: string): Promise<ArrayBuffer> {
   const res = await fetch(url)
   if (!res.ok) throw new Error(`fetch failed: ${res.status}`)
   return res.arrayBuffer()
+}
+
+/** Resolves a file material's real bytes, cache-aware for cloud-stored
+ * files (2026-08-24, real user diagnosis: this and getMaterialFileUrl's
+ * other callers were each independently re-downloading the same file from
+ * Supabase Storage). fileDataUrl (the local-only base64 fallback) is
+ * already free to read -- a data: URL resolves in-memory, no network --
+ * so only the filePath branch goes through the shared blob cache. */
+async function resolveMaterialArrayBuffer(material: Material): Promise<ArrayBuffer | null> {
+  if (material.fileDataUrl) return fetchArrayBuffer(material.fileDataUrl)
+  if (material.filePath) {
+    const blob = await getMaterialFileBlob(material.filePath)
+    return blob ? blob.arrayBuffer() : null
+  }
+  return null
 }
 
 export async function extractPdfText(data: ArrayBuffer): Promise<string> {
@@ -193,11 +208,11 @@ const chapterScopedPagesCache = new Map<string, Promise<PageTextResult>>()
 export async function getChapterScopedText(material: Material, chapter: MaterialChapter, section: ChapterSection | undefined): Promise<{ text: string; scopeLabel: string }> {
   const range = section ?? chapter
   const scopeLabel = section ? `capitolo "${chapter.title}", sezione "${section.title}"` : `capitolo "${chapter.title}"`
-  const url = material.fileDataUrl ?? (material.filePath ? await getMaterialFileUrl(material.filePath) : null)
-  if (!url) return { text: '', scopeLabel }
   let pagesPromise = chapterScopedPagesCache.get(material.id)
   if (!pagesPromise) {
-    pagesPromise = fetchArrayBuffer(url).then((buf) => extractPdfTextByPage(buf))
+    const buf = await resolveMaterialArrayBuffer(material)
+    if (!buf) return { text: '', scopeLabel }
+    pagesPromise = extractPdfTextByPage(buf)
     chapterScopedPagesCache.set(material.id, pagesPromise)
   }
   const { pages } = await pagesPromise
@@ -258,18 +273,15 @@ async function getMaterialTextUncached(material: Material): Promise<MaterialText
   }
 
   const name = material.fileName?.toLowerCase() ?? ''
-  let url = material.fileDataUrl ?? null
-  if (!url && material.filePath) url = await getMaterialFileUrl(material.filePath)
-  if (!url) return { text: null, truncated: false }
 
   try {
-    if (name.endsWith('.pdf')) {
-      const buf = await fetchArrayBuffer(url)
-      const text = await extractPdfText(buf)
-      return { text, truncated: text.length >= MAX_CHARS }
-    }
-    if (/\.(txt|md|markdown|csv|json)$/.test(name)) {
-      const buf = await fetchArrayBuffer(url)
+    if (name.endsWith('.pdf') || /\.(txt|md|markdown|csv|json)$/.test(name)) {
+      const buf = await resolveMaterialArrayBuffer(material)
+      if (!buf) return { text: null, truncated: false }
+      if (name.endsWith('.pdf')) {
+        const text = await extractPdfText(buf)
+        return { text, truncated: text.length >= MAX_CHARS }
+      }
       const text = new TextDecoder('utf-8').decode(buf)
       return { text: text.slice(0, MAX_CHARS), truncated: text.length > MAX_CHARS }
     }

@@ -3,7 +3,7 @@ import { ExternalLink, Sparkles, ListChecks, Loader2, Pencil, Eraser, Trash2, Ey
 import { Button } from '../ui/Button'
 import { Textarea } from '../ui/Input'
 import { useAppStore } from '../../store/useAppStore'
-import { getMaterialFileUrl } from '../../lib/storage'
+import { getMaterialFileBlob } from '../../lib/storage'
 import { isViewableInline } from '../../lib/materialContent'
 import { Whiteboard } from './Whiteboard'
 import { PdfViewer } from './PdfViewer'
@@ -99,23 +99,35 @@ export function MaterialViewer({
 
   useEffect(() => {
     let cancelled = false
+    let objectUrl: string | null = null
     setTextContent(null)
     setFileUrl(material.fileDataUrl ?? null)
 
     async function load() {
       if (material.type !== 'file') return
       let url = material.fileDataUrl ?? null
+      let blob: Blob | null = null
       if (!url && material.filePath) {
         setLoading(true)
-        url = await getMaterialFileUrl(material.filePath)
+        // getMaterialFileBlob, not getMaterialFileUrl+fetch (2026-08-24,
+        // real user diagnosis: every open was re-downloading the whole
+        // file from Storage, even to re-view a section read minutes
+        // earlier -- this is the single most-hit call site for that,
+        // MaterialViewer is what "opening a material" actually mounts).
+        // A local blob: URL, not the remote signed URL, so pdf.js/download
+        // never touch the network on a cache hit either.
+        blob = await getMaterialFileBlob(material.filePath)
+        if (blob) {
+          objectUrl = URL.createObjectURL(blob)
+          url = objectUrl
+        }
         if (!cancelled) setLoading(false)
       }
       if (cancelled) return
       setFileUrl(url)
-      if (isViewableInline(material) === 'text' && url) {
+      if (isViewableInline(material) === 'text' && (blob || url)) {
         try {
-          const res = await fetch(url)
-          const text = await res.text()
+          const text = blob ? await blob.text() : await (await fetch(url!)).text()
           if (!cancelled) setTextContent(text)
         } catch {
           if (!cancelled) setTextContent('(non sono riuscita a leggere il file)')
@@ -125,6 +137,7 @@ export function MaterialViewer({
     load()
     return () => {
       cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [material.id, material.filePath])

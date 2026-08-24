@@ -1,5 +1,5 @@
 import { useAppStore } from '../store/useAppStore'
-import { canUseCloudStorage, uploadMaterialFile } from './storage'
+import { canUseCloudStorage, uploadMaterialFile, invalidateMaterialFileCache } from './storage'
 
 function readAsDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -26,6 +26,10 @@ export function useReplaceMaterialFile() {
     if (canUseCloudStorage(currentUserId)) {
       const path = await uploadMaterialFile(currentUserId, materialId, file)
       if (!path) return false
+      // The upload re-uses the SAME Storage path (upsert), so the client
+      // cache has to be told explicitly that the old bytes are gone --
+      // nothing about the path itself changes to signal that (2026-08-24).
+      await invalidateMaterialFileCache(path)
       updateMaterial(materialId, { filePath: path })
       return true
     }
