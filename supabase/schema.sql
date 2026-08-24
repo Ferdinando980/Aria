@@ -99,11 +99,16 @@ create table if not exists profiles (
 -- Libreria di skill (Librarian) e log eventi/metriche — porta l'architettura
 -- della ricerca Cognitive RPG dentro Aria. Vedi src/lib/skills.ts.
 create table if not exists skills (
-  id uuid primary key,
+  -- text, not uuid (2026-08-24, real bug found live: "invalid input syntax
+  -- for type uuid") -- seed/migrated skills use stable, human-readable ids
+  -- ("seed_task_breakdown_first_step", "migrated_material_<uuid>") by
+  -- design, so they don't duplicate on re-seed; a uuid column rejects them
+  -- outright. See migration_2026-08-24c.sql for the fix on an existing DB.
+  id text primary key,
   user_id uuid not null references auth.users(id) on delete cascade,
   version int not null default 1,
   title text not null,
-  domain text not null check (domain in ('chat', 'task_breakdown', 'material_chat', 'study_plan', 'pdf_edit', 'material_knowledge', 'chapters', 'flashcards', 'summary')),
+  domain text not null check (domain in ('chat', 'task_breakdown', 'material_chat', 'study_plan', 'pdf_edit', 'material_knowledge', 'chapters', 'flashcards', 'summary', 'formula_example')),
   capability_tags text[] not null default '{}',
   content text not null,
   status text not null default 'DRAFT' check (status in ('DRAFT', 'VERIFIED', 'PERSONAL_NOTE', 'REJECTED', 'ARCHIVED')),
@@ -111,7 +116,7 @@ create table if not exists skills (
   uses int not null default 0,
   successes int not null default 0,
   generation_method text not null default 'manual' check (generation_method in ('manual', 'distilled')),
-  derived_from uuid,
+  derived_from text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -123,7 +128,9 @@ create table if not exists skill_events (
   domain text not null,
   config text not null check (config in ('F', 'B')),
   event_type text not null check (event_type in ('CALL', 'OUTCOME')),
-  skill_ids uuid[] not null default '{}',
+  -- text[], not uuid[] -- same reason as skills.id above: an event whose
+  -- skill_ids references a seed/migrated skill has non-uuid ids in the array.
+  skill_ids text[] not null default '{}',
   ref text not null default '',
   outcome text check (outcome in ('positive', 'negative')),
   -- Exact Gemini model string used for this CALL (2026-08-20) -- so a
