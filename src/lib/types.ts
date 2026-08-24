@@ -389,7 +389,7 @@ export const XP_PER_LEVEL = 120
 // become future sharing candidates; 'content'-class skills top out at
 // PERSONAL_NOTE (see SkillStatus) and are never eligible, regardless of
 // consent -- consent is necessary but not sufficient, per that discussion.
-export type SkillDomain = 'chat' | 'task_breakdown' | 'material_chat' | 'study_plan' | 'pdf_edit' | 'material_knowledge' | 'chapters' | 'flashcards' | 'summary'
+export type SkillDomain = 'chat' | 'task_breakdown' | 'material_chat' | 'study_plan' | 'pdf_edit' | 'material_knowledge' | 'chapters' | 'flashcards' | 'summary' | 'formula_example'
 // 'ARCHIVED' is used ONLY inside AppState.archivedSkills (useAppStore.ts),
 // never inside the live `skills` array -- keeps it from ever being confused
 // with 'REJECTED' (failed the evidence bar) in the DRAFT/VERIFIED/REJECTED

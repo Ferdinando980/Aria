@@ -407,6 +407,14 @@ export function domainClass(domain: SkillDomain): 'procedure' | 'content' {
     case 'summary':
     case 'pdf_edit': // never actually distills a skill (no retrievable content), classification is moot
       return 'procedure'
+    // 2026-08-24, explicit user request: "la tecnica non dipende dal contenuto
+    // specifico di una materia, è candidata futura alla condivisione" -- a
+    // worked numeric example TECHNIQUE (how to build/verify one) generalizes
+    // across subjects the same way task_breakdown does; the specific formula
+    // it was generated for lives in the example's own content, not in what
+    // makes the skill shareable.
+    case 'formula_example':
+      return 'procedure'
   }
 }
 
@@ -505,7 +513,7 @@ export interface DomainWasteReport {
   lift: number | null
 }
 
-const DOMAINS: SkillDomain[] = ['chat', 'task_breakdown', 'material_chat', 'study_plan', 'pdf_edit', 'material_knowledge', 'chapters', 'flashcards', 'summary']
+const DOMAINS: SkillDomain[] = ['chat', 'task_breakdown', 'material_chat', 'study_plan', 'pdf_edit', 'material_knowledge', 'chapters', 'flashcards', 'summary', 'formula_example']
 
 export function retrievalWasteAnalysis(events: SkillEvent[]): DomainWasteReport[] {
   return DOMAINS.map((domain) => {

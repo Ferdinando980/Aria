@@ -23,6 +23,7 @@ const DOMAIN_LABEL: Record<string, string> = {
   chapters: 'Rilevamento capitoli',
   flashcards: 'Flashcard',
   summary: 'Riassunti',
+  formula_example: 'Esempi numerici',
 }
 const STATUS_LABEL: Record<string, string> = { DRAFT: 'in prova', VERIFIED: 'verificata', PERSONAL_NOTE: 'appunto personale', REJECTED: 'scartata' }
 

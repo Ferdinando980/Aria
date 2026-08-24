@@ -165,7 +165,22 @@ function renderCallout(line: string, key: string, as: 'li' | 'div') {
   )
 }
 
-export function MarkdownLite({ text, className }: { text: string; className?: string }) {
+export function MarkdownLite({
+  text,
+  className,
+  onBlockFormula,
+}: {
+  text: string
+  className?: string
+  /** Optional extension point (2026-08-24, real user request: "un'azione
+   * 'Genera esempio' su ogni formula a blocco") -- called once per
+   * BLOCK-level "$$...$$" formula (never inline math, per the same
+   * request: "non inline") with the raw LaTeX and a stable key, and
+   * rendered right after that formula's own highlighted box. undefined by
+   * default -- every other MarkdownLite caller (StudyPlanPanel's inline
+   * chapter summary, Flashcards) is unaffected. */
+  onBlockFormula?: (latex: string, key: string) => React.ReactNode
+}) {
   const lines = text.split('\n')
   const blocks: React.ReactNode[] = []
   let listBuffer: string[] = []
@@ -215,6 +230,7 @@ export function MarkdownLite({ text, className }: { text: string; className?: st
     if (/^\$\$[^$]+\$\$$/.test(line)) {
       flushList(key)
       blocks.push(renderMath(line.slice(2, -2), true, key))
+      if (onBlockFormula) blocks.push(<Fragment key={`${key}-action`}>{onBlockFormula(line.slice(2, -2), key)}</Fragment>)
       continue
     }
     // Both "## " and "### " -- the model sometimes reaches for a deeper

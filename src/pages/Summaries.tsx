@@ -12,6 +12,7 @@ import { routeSkills, routeMaterialKnowledge, skillsAsPromptContext, tagsFromTex
 import { enforceSkillBudget } from '../lib/contextBudget'
 import { MessageFeedback } from '../components/shared/MessageFeedback'
 import { MarkdownLite } from '../components/shared/MarkdownLite'
+import { FormulaExamplePanel } from '../components/shared/FormulaExamplePanel'
 
 // Real user request (2026-08-24): "dov'è finito il tab coi riassunti?
 // avevi detto che avresti fatto due schermate diverse, mi aspettavo una
@@ -334,7 +335,11 @@ export default function Summaries() {
             <CardSubtitle className="mb-3">{material?.title}</CardSubtitle>
             {activeSummary ? (
               <>
-                <MarkdownLite text={activeSummary.content} className="mb-3 rounded-xl bg-[var(--color-surface-2)] p-5 text-base leading-loose" />
+                <MarkdownLite
+                  text={activeSummary.content}
+                  className="mb-3 rounded-xl bg-[var(--color-surface-2)] p-5 text-base leading-loose"
+                  onBlockFormula={(latex, key) => <FormulaExamplePanel key={key} latex={latex} context={`${material?.title ?? ''} — ${readLabel}`} />}
+                />
                 {lastSummaryCall && (
                   <MessageFeedback
                     key={lastSummaryCall.map((e) => e.id).join(',')}

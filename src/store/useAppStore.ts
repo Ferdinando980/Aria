@@ -27,6 +27,7 @@ import { canSync, syncDelete, syncUpsert } from '../lib/sync'
 import { deleteMaterialFile } from '../lib/storage'
 import { seedSkills, reviewSkills, archiveSkillsForMaterial, recognizeArchivedSkills } from '../lib/skills'
 import { logCall, logOutcome, syncSkillEvent } from '../lib/skillEvents'
+import type { FormulaGateAttempt } from '../lib/formulaExamples'
 
 const SKILL_EVENTS_CAP = 1000
 
@@ -186,6 +187,13 @@ interface AppState {
   upsertSkillContent: (id: string, content: string, fallback: Omit<Skill, 'id' | 'content' | 'createdAt' | 'updatedAt'>) => void
   logSkillCall: (domain: SkillDomain, config: 'F' | 'B', skillIds: string[], model: string) => SkillEvent
   recordSkillOutcome: (callEvent: SkillEvent, outcome: SkillOutcome) => void
+  /** Gate 1 (mathematical correctness, computed) attempts for the formula
+   * example feature -- see lib/formulaExamples.ts's module comment for why
+   * this is kept separate from skillEvents (a deterministic computed gate,
+   * not a behavioral CALL/OUTCOME signal). Local only, not synced to
+   * Supabase -- no schema change needed for a log this narrow. */
+  formulaGateAttempts: FormulaGateAttempt[]
+  logFormulaGateAttempt: (attempt: FormulaGateAttempt) => void
   /** Moves a skill back from archivedSkills into the live, routable `skills`
    * array -- the "recuperabile" half of the archival design. Manual only
    * (Settings UI), never automatic. */
@@ -309,6 +317,7 @@ export const useAppStore = create<AppState>()(
       currentUserId: undefined,
       skills: [],
       skillEvents: [],
+      formulaGateAttempts: [],
       archivedSkills: [],
       archivedMaterials: [],
       librarianEnabled: true,
@@ -1290,6 +1299,10 @@ export const useAppStore = create<AppState>()(
           })
       },
 
+      logFormulaGateAttempt: (attempt) => {
+        set((s) => ({ formulaGateAttempts: [...s.formulaGateAttempts, attempt].slice(-SKILL_EVENTS_CAP) }))
+      },
+
       logSkillCall: (domain, config, skillIds, model) => {
         const event = logCall(domain, config, skillIds, model)
         set((s) => ({ skillEvents: [...s.skillEvents, event].slice(-SKILL_EVENTS_CAP) }))
@@ -1511,6 +1524,7 @@ export const useAppStore = create<AppState>()(
         archivedSkills: s.archivedSkills,
         archivedMaterials: s.archivedMaterials,
         skillEvents: s.skillEvents,
+        formulaGateAttempts: s.formulaGateAttempts,
         librarianEnabled: s.librarianEnabled,
         skillsInitialized: s.skillsInitialized,
         highlights: s.highlights,
