@@ -83,34 +83,77 @@ export function getLastModelUsed(): string {
   return lastModelUsed
 }
 
-/** Runs a Gemini call against GEMINI_MODEL with withRetry's normal
- * resilience; if it's STILL failing after those retries with a genuinely
- * retryable error (429/5xx -- never auth/bad-request), retries the SAME
- * call against GEMINI_FALLBACK_MODEL once more instead of giving up. Real
- * live trigger for this (2026-08-24): gemini-3.7-flash (this month's model)
- * hit multiple consecutive 503 "high demand" errors even after 4 retries --
- * a second, more established model on the same key/account is a real
- * fallback path, not a hypothetical one. */
+// Real trigger for round-robin (2026-08-24, explicit user request after
+// watching a real generation eat ~20s+4 wasted API calls): once
+// GEMINI_MODEL's free-tier DAILY quota is out (429, quotaId
+// GenerateRequestsPerDayPerProjectPerModel-FreeTier -- confirmed live in
+// console, not assumed), it stays out until Google's own daily reset, no
+// amount of local retrying fixes it. Always trying GEMINI_MODEL first meant
+// EVERY call paid a full withRetry cycle (4 attempts, up to ~20s of
+// backoff) against a model that was certain to fail, before ever reaching
+// the fallback. Two changes: (1) which model is tried FIRST now alternates
+// call to call (roundRobinIndex), spreading load across both instead of
+// hammering one while the other sits idle; (2) a model that just failed
+// with a 429 is remembered and skipped as primary for a cooldown window, so
+// once a model's quota is confirmed out, calls stop wasting a full retry
+// cycle on it until the cooldown expires. QUOTA_COOLDOWN_MS is deliberately
+// short (not "until midnight") -- guessing Google's exact daily reset
+// boundary wrong in either direction has a cheap failure mode (too short:
+// the model just gets skipped again after one more wasted attempt; too
+// long: the other model still serves every call fine via round-robin), so
+// there's no need to hardcode a reset time we can't verify.
+const QUOTA_COOLDOWN_MS = 10 * 60 * 1000
+const quotaCooldownUntil: Record<string, number> = {}
+
+function isQuotaError(err: unknown): boolean {
+  return err instanceof GoogleGenerativeAIFetchError && err.status === 429
+}
+
+function isOnQuotaCooldown(model: string): boolean {
+  return (quotaCooldownUntil[model] ?? 0) > Date.now()
+}
+
+let roundRobinIndex = 0
+
+/** Runs a Gemini call against GEMINI_MODEL and GEMINI_FALLBACK_MODEL, in an
+ * order that alternates call-to-call (round-robin) and skips whichever one
+ * most recently hit a real quota wall (isOnQuotaCooldown) as the primary
+ * attempt -- see the block comment above for why. Each attempt still gets
+ * withRetry's normal resilience (retries the SAME model on a transient
+ * 429/5xx before giving up on it); only genuinely retryable errors move on
+ * to the next model, auth/bad-request still fails fast and honestly. Real
+ * live trigger for even needing two models at all (2026-08-24):
+ * gemini-3.7-flash (this month's model) hit multiple consecutive 503 "high
+ * demand" errors even after 4 retries -- a second, more established model
+ * on the same key/account is a real fallback path, not a hypothetical one. */
 export async function generateWithFallback<T>(
   key: string,
   modelConfig: { systemInstruction?: string; generationConfig?: Record<string, unknown> },
   run: (model: ReturnType<GoogleGenerativeAI['getGenerativeModel']>) => Promise<T>,
 ): Promise<T> {
   const genAI = new GoogleGenerativeAI(key)
-  try {
-    const primary = genAI.getGenerativeModel({ model: GEMINI_MODEL, ...modelConfig })
-    const result = await withRetry(() => run(primary))
-    lastModelUsed = GEMINI_MODEL
-    return result
-  } catch (err) {
-    const retryable = err instanceof GoogleGenerativeAIFetchError && RETRYABLE_STATUSES.has(err.status ?? 0)
-    if (!retryable) throw err
-    console.warn(`[gemini] ${GEMINI_MODEL} still failing after retries, falling back to ${GEMINI_FALLBACK_MODEL}`, err)
-    const fallback = genAI.getGenerativeModel({ model: GEMINI_FALLBACK_MODEL, ...modelConfig })
-    const result = await withRetry(() => run(fallback))
-    lastModelUsed = GEMINI_FALLBACK_MODEL
-    return result
+  const base: [string, string] = roundRobinIndex % 2 === 0 ? [GEMINI_MODEL, GEMINI_FALLBACK_MODEL] : [GEMINI_FALLBACK_MODEL, GEMINI_MODEL]
+  roundRobinIndex++
+  const order = isOnQuotaCooldown(base[0]) && !isOnQuotaCooldown(base[1]) ? [base[1], base[0]] : base
+
+  let lastErr: unknown
+  for (let i = 0; i < order.length; i++) {
+    const modelName = order[i]
+    try {
+      const model = genAI.getGenerativeModel({ model: modelName, ...modelConfig })
+      const result = await withRetry(() => run(model))
+      lastModelUsed = modelName
+      return result
+    } catch (err) {
+      lastErr = err
+      const retryable = err instanceof GoogleGenerativeAIFetchError && RETRYABLE_STATUSES.has(err.status ?? 0)
+      if (!retryable) throw err
+      if (isQuotaError(err)) quotaCooldownUntil[modelName] = Date.now() + QUOTA_COOLDOWN_MS
+      const next = order[i + 1]
+      if (next) console.warn(`[gemini] ${modelName} still failing after retries, trying ${next}`, err)
+    }
   }
+  throw lastErr
 }
 
 const GEMINI_KEY_STORAGE = 'aria.geminiApiKey'
@@ -512,6 +555,8 @@ Una persona con ADHD fatica a restare concentrata su blocchi di testo lunghi e u
 - Usa "## " per dividere il riassunto in sezioni con titoli brevi e concreti (funzionano come punti di appoggio per l'occhio) -- non un unico blocco continuo.
 - Usa elenchi puntati ("- ") per liste di concetti, passaggi o esempi, invece di infilarli in una frase lunga.
 - Metti in **grassetto** (markdown, doppio asterisco) il termine o il dato chiave di ogni paragrafo/punto -- una persona che scorre veloce deve poter cogliere l'essenziale senza rileggere tutto.
+- Se un punto o un paragrafo è di un tipo riconoscibile, aprilo con un'etichetta tra parentesi quadre maiuscola prima del testo, es. "[DEFINIZIONE] ...", "[ESEMPIO] ...", "[FORMULA] ...", "[REGOLA] ...", "[ALGORITMO] ...", "[ATTENZIONE] ..." per un errore comune o un fraintendimento -- solo quando è genuinamente utile per orientarsi al colpo d'occhio, non su ogni singola riga, mai più di un'etichetta per punto.
+- Ogni formula matematica in notazione LaTeX vera: $...$ per una formula dentro una frase (es. "il costo è $T(n) = O(n)$"), $$...$$ su una riga a sé per una formula isolata -- mai scritta a parole o con simboli approssimati, mai testo tipo "T di n" quando intendi $T(n)$.
 - Testo semplice (nessun JSON), niente introduzioni tipo "Ecco il riassunto".
 - Copri i concetti chiave, le definizioni importanti e le relazioni tra loro -- non una parafrasi riga per riga, un vero riassunto che si possa studiare da solo.
 - Lunghezza proporzionata al contenuto reale: un capitolo breve merita un riassunto breve, non va allungato artificialmente -- ma anche un capitolo lungo resta diviso in sezioni brevi, mai un blocco unico più lungo.
