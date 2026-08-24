@@ -45,9 +45,17 @@ export async function getMaterialFileUrl(path: string): Promise<string | null> {
  * directly, so a PDF opened once during a study session serves every
  * later read (viewer, chapter detection, summary generation, ...) from
  * this ONE cached copy instead of each call site re-downloading its own. */
-export async function getMaterialFileBlob(path: string): Promise<Blob | null> {
-  const cached = await getCachedMaterialBlob(path)
-  if (cached) return cached
+// Real duplicate-download found live in Supabase's own request logs
+// (2026-08-24): MaterialViewer and ChaptersPanel both call this on mount,
+// and on the FIRST open of a material -- the exact moment the cache can't
+// help yet -- neither has written to IndexedDB before the other's cache
+// check runs, so both independently sign+fetch the full file. Same fix
+// pattern as materialContent.ts's chapterScopedPagesCache: a per-path
+// in-flight promise so concurrent callers share one real fetch instead of
+// racing two.
+const inFlightFetches = new Map<string, Promise<Blob | null>>()
+
+async function fetchAndCacheMaterialFileBlob(path: string): Promise<Blob | null> {
   const url = await getMaterialFileUrl(path)
   if (!url) return null
   try {
@@ -59,6 +67,16 @@ export async function getMaterialFileBlob(path: string): Promise<Blob | null> {
   } catch {
     return null
   }
+}
+
+export async function getMaterialFileBlob(path: string): Promise<Blob | null> {
+  const cached = await getCachedMaterialBlob(path)
+  if (cached) return cached
+  const inFlight = inFlightFetches.get(path)
+  if (inFlight) return inFlight
+  const promise = fetchAndCacheMaterialFileBlob(path).finally(() => inFlightFetches.delete(path))
+  inFlightFetches.set(path, promise)
+  return promise
 }
 
 export async function deleteMaterialFile(path: string) {
