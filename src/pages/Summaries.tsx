@@ -334,7 +334,7 @@ export default function Summaries() {
             <CardSubtitle className="mb-3">{material?.title}</CardSubtitle>
             {activeSummary ? (
               <>
-                <MarkdownLite text={activeSummary.content} className="mb-3 rounded-xl bg-[var(--color-surface-2)] p-4 text-sm leading-relaxed" />
+                <MarkdownLite text={activeSummary.content} className="mb-3 rounded-xl bg-[var(--color-surface-2)] p-5 text-base leading-loose" />
                 {lastSummaryCall && (
                   <MessageFeedback
                     key={lastSummaryCall.map((e) => e.id).join(',')}
