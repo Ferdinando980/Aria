@@ -1,0 +1,67 @@
+/* Theme FullCalendar to match Aria's dark, calm palette */
+.fc {
+  --fc-border-color: var(--color-border);
+  --fc-page-bg-color: transparent;
+  --fc-neutral-bg-color: var(--color-surface-2);
+  --fc-list-event-hover-bg-color: var(--color-surface-2);
+  --fc-today-bg-color: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+.fc .fc-toolbar-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.fc .fc-button {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  color: var(--color-ink);
+  text-transform: capitalize;
+  box-shadow: none;
+  font-weight: 500;
+}
+.fc .fc-button:hover {
+  background: var(--color-border);
+}
+.fc .fc-button-primary:not(:disabled).fc-button-active,
+.fc .fc-button-primary:not(:disabled):active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: white;
+}
+.fc .fc-daygrid-day-number,
+.fc .fc-col-header-cell-cushion {
+  color: var(--color-ink-muted);
+  text-decoration: none;
+  font-size: 0.8rem;
+}
+.fc .fc-day-today .fc-daygrid-day-number {
+  color: var(--color-primary);
+  font-weight: 700;
+}
+.fc-event {
+  border-radius: 8px;
+  padding: 1px 6px;
+  font-size: 0.75rem;
+  border: none;
+}
+.fc-list-event:hover td {
+  background: var(--color-surface-2);
+}
+.fc-theme-standard td,
+.fc-theme-standard th {
+  border-color: var(--color-border);
+}
+.fc-scrollgrid {
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+/* Real Task entries (2026-08-24, see Calendar.tsx) fade + strike once done,
+   same "opacity-50" treatment TaskItem.tsx already uses in Oggi -- one
+   consistent "this is finished" language across both surfaces. */
+.fc-task-done {
+  opacity: 0.5;
+  text-decoration: line-through;
+}

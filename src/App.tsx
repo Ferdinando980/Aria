@@ -1,0 +1,176 @@
+import { useEffect, Suspense, lazy } from 'react'
+import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { Layout } from './components/layout/Layout'
+import { AuthGate } from './components/layout/AuthGate'
+import Today from './pages/Today'
+import Settings from './pages/Settings'
+import { useAuthStore } from './store/authStore'
+
+import type { CalendarEvent } from './lib/types'
+
+const CalendarPage = lazy(() => import('./pages/Calendar'))
+const Materials = lazy(() => import('./pages/Materials'))
+const Assistant = lazy(() => import('./pages/Assistant'))
+const Flashcards = lazy(() => import('./pages/Flashcards'))
+const Summaries = lazy(() => import('./pages/Summaries'))
+const ProgressPage = lazy(() => import('./pages/Progress'))
+const Game = lazy(() => import('./pages/Game'))
+import { useAppStore } from './store/useAppStore'
+import { syncPullAll, syncPushAll } from './lib/sync'
+import { isSupabaseConfigured } from './lib/supabase'
+
+// Self-heal for a SPECIFIC pre-2026-08-21 data artifact (found live
+// 2026-08-24, user report: "vedo uno 0" on a real calendar event). The fix
+// that day added a real allDay concept and made day-cell clicks set it
+// correctly going forward -- but never touched events already saved BEFORE
+// that fix existed with the old broken shape: allDay:false at exactly local
+// midnight (FullCalendar's raw day-cell timestamp, used as a TIMED start),
+// which renders as a stray "0:00" (truncated to "0" at month-view size) AND,
+// because month view renders timed vs all-day events with different
+// templates, silently drops the colored background the contrast fix was
+// for -- so both symptoms the user saw trace back to this one wrong field.
+// Narrow, specific signature (exact local midnight + exactly 1hr duration,
+// the old code's actual default) so a real legitimately-scheduled midnight
+// event is never touched. Pure function, called from two places below (see
+// their comments for why one call site alone isn't enough).
+function fixLegacyAllDayEvents(events: CalendarEvent[], updateEvent: (id: string, patch: Partial<CalendarEvent>) => void) {
+  for (const e of events) {
+    if (e.allDay) continue
+    const start = new Date(e.start)
+    const isLocalMidnight = start.getHours() === 0 && start.getMinutes() === 0 && start.getSeconds() === 0
+    const isOneHourDefault = e.end ? new Date(e.end).getTime() - start.getTime() === 3600000 : false
+    if (isLocalMidnight && isOneHourDefault) updateEvent(e.id, { allDay: true })
+  }
+}
+
+function SyncBootstrap() {
+  const init = useAuthStore((s) => s.init)
+  const session = useAuthStore((s) => s.session)
+  const setCurrentUserId = useAppStore((s) => s.setCurrentUserId)
+  const hydrateFromRemote = useAppStore((s) => s.hydrateFromRemote)
+  const markLocalDataPushed = useAppStore((s) => s.markLocalDataPushed)
+  const ensureSkillsInitialized = useAppStore((s) => s.ensureSkillsInitialized)
+  const resyncSkillsForDomainFix = useAppStore((s) => s.resyncSkillsForDomainFix)
+  const updateEvent = useAppStore((s) => s.updateEvent)
+
+  useEffect(() => {
+    if (isSupabaseConfigured) init()
+    ensureSkillsInitialized()
+
+    // Self-heal on every load (2026-08-20, explicit user request: "devono
+    // essere sempre abilitate... se qualcuno le ha off ora abilitatele").
+    // librarianEnabled is local-only/persisted (never synced), so a value
+    // saved before today's "on by default" change -- or any other stale
+    // localStorage snapshot -- would otherwise stay false forever across
+    // reloads. researchConsent is synced, and hydrateFromRemote's `?? true`
+    // fallback stops a null remote column from re-downgrading it going
+    // forward, but doesn't retroactively fix a profile row that already has
+    // `false` stored from before that fix -- this client-side correction
+    // covers both cases the same way, unconditionally, on every app start.
+    const state = useAppStore.getState()
+    if (!state.librarianEnabled) state.setLibrarianEnabled(true)
+    if (state.profile.researchConsent !== true) state.setResearchConsent(true)
+
+    // Covers local-only/logged-out use (no second effect ever runs to
+    // re-check after this). For a logged-in account this ALSO runs here,
+    // immediately -- but see the second call site below for why it can't be
+    // the only one.
+    fixLegacyAllDayEvents(state.events, updateEvent)
+  }, [init, ensureSkillsInitialized, updateEvent])
+
+  useEffect(() => {
+    const userId = session?.user.id
+    setCurrentUserId(userId)
+    if (!userId) return
+
+    async function syncUp() {
+      const state = useAppStore.getState()
+      // First login on this device: nothing created before now is on the
+      // server yet, so push it up once before pulling — otherwise a task
+      // added while offline/logged-out would look like it "disappeared".
+      if (state.pushedLocalDataFor !== userId) {
+        const { ok, failedTables } = await syncPushAll(userId!, {
+          subjects: state.subjects,
+          // archivedMaterials included here too -- same 'materials' table,
+          // area_of_interest distinguishes them on the way back in.
+          materials: [...state.materials, ...state.archivedMaterials],
+          tasks: state.tasks,
+          events: state.events,
+          profile: state.profile,
+          // archivedSkills included here too -- same 'skills' table, ARCHIVED
+          // status distinguishes them on the way back in (hydrateFromRemote).
+          skills: [...state.skills, ...state.archivedSkills],
+          skillEvents: state.skillEvents,
+          highlights: state.highlights,
+          chapters: state.chapters,
+          flashcards: state.flashcards,
+          summaries: state.summaries,
+          textEdits: state.textEdits,
+        })
+        // Only mark done on a FULLY successful push (2026-08-24, prompted by
+        // the skills.domain/status CHECK constraint bug -- see CLAUDE.md).
+        // Marking this unconditionally is exactly how that bug went
+        // unnoticed for 3 days: a first-login push that partially failed
+        // (one bad row can fail a whole multi-row upsert atomically) was
+        // still recorded as "pushed", so it never automatically retried on
+        // a later load. Leaving it unmarked means the next load's syncUp()
+        // retries the whole push -- safe, upsert is idempotent by id.
+        if (ok) markLocalDataPushed(userId!)
+        else console.warn('[sync] first-login push incomplete, will retry next load', failedTables)
+      }
+      const data = await syncPullAll(userId!)
+      if (data) hydrateFromRemote(data)
+
+      // Re-run AFTER the pull settles, not just in the first effect above:
+      // hydrateFromRemote's per-id merge (byEvt Map, remote row wins on
+      // conflict) can overwrite the first effect's local fix with a still-
+      // unfixed remote row if the pull resolves after that fix's own
+      // syncUpsert -- both are independent fire-and-forget async chains with
+      // no ordering guarantee between them. Running it again here, on the
+      // FINAL settled state, is what actually makes the fix stick for a
+      // logged-in account (confirmed live: the first-effect-only version
+      // kept reverting on reload, exactly this race).
+      fixLegacyAllDayEvents(useAppStore.getState().events, useAppStore.getState().updateEvent)
+
+      // One-shot self-heal (2026-08-24) for accounts whose first-login push
+      // happened BEFORE this fix existed -- their pushedLocalDataFor is
+      // already set from back then (even though it may have partially
+      // failed under the stale CHECK constraint), so the branch above never
+      // runs again for them. Retries every load until it succeeds once
+      // (false before the 2026-08-24 Supabase migration is run, since the
+      // same constraint would reject it again -- see CLAUDE.md).
+      if (!useAppStore.getState().skillsResyncedForDomainFix) {
+        const { succeeded, failed } = await resyncSkillsForDomainFix()
+        if (failed > 0) console.warn(`[sync] skill resync: ${succeeded} ok, ${failed} still failing -- will retry next load`)
+      }
+    }
+    syncUp()
+  }, [session, setCurrentUserId, hydrateFromRemote, markLocalDataPushed, resyncSkillsForDomainFix])
+
+  return null
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <SyncBootstrap />
+      <AuthGate>
+        <Suspense fallback={null}>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route index element={<Today />} />
+              <Route path="/calendario" element={<CalendarPage />} />
+              <Route path="/materiali" element={<Materials />} />
+              <Route path="/aria" element={<Assistant />} />
+              <Route path="/flashcard" element={<Flashcards />} />
+              <Route path="/riassunti" element={<Summaries />} />
+              <Route path="/progressi" element={<ProgressPage />} />
+              <Route path="/impostazioni" element={<Settings />} />
+            </Route>
+            <Route path="/gioco" element={<Game />} />
+          </Routes>
+        </Suspense>
+      </AuthGate>
+    </BrowserRouter>
+  )
+}

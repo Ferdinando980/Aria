@@ -1,0 +1,151 @@
+@import "tailwindcss";
+
+@theme {
+  /* Lexend (2026-08-24, richiesta esplicita utente: "scegli un font piu'
+     carino"): "Inter" prima non era mai caricato davvero da nessuna parte
+     (nessun <link>, nessun @font-face) -- l'app è sempre girata sul fallback
+     di sistema. Lexend è stato scelto non a caso: è un font Google
+     progettato apposta da ricerca sulla leggibilità (riduce il carico
+     cognitivo in lettura), coerente col resto del design pensato per ADHD
+     (vedi in cima a questo file). Caricato via Google Fonts in index.html. */
+  --font-sans: "Lexend", ui-sans-serif, system-ui, -apple-system, sans-serif;
+
+  /* Calm, low-arousal palette on purpose: ADHD UX guidance favors muted,
+     desaturated backgrounds with a single confident accent, never harsh
+     reds for "failure" states (amber/coral instead — never punitive).
+     Hues deliberately spread around the wheel so each semantic color reads
+     as distinct at a glance, not just "different enough on close reading":
+     primary (indigo ~255°) and calm (sky ~210°) share the cool family;
+     good (mint ~165°) is the one clear outlier, reserved for success/done;
+     accent (golden ~48°) and warn (orange ~29°) are the warm pair -- kept
+     ~19° apart (2026-08-21 fix: they used to sit only ~10° apart, and
+     collide in exactly the place that matters most, TaskItem.tsx's
+     priority dot, where "media" (accent) and "alta" (warn) sit right next
+     to each other -- too close to tell apart at a glance, which defeats
+     the point of color-coding priority in the first place). */
+  --color-bg: #0f1115;
+  --color-surface: #171a21;
+  --color-surface-2: #1f232c;
+  --color-border: #2a2f3a;
+  --color-ink: #f2f2f7;
+  --color-ink-muted: #9aa0ac;
+
+  --color-primary: #6c5ce7;
+  --color-primary-ink: #ffffff;
+  --color-accent: #fde06d;
+  --color-good: #55efc4;
+  --color-warn: #ffb26b;
+  --color-calm: #74b9ff;
+
+  --radius-xl: 1.25rem;
+  --radius-2xl: 1.75rem;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html {
+  /* User request (2026-08-21): "il font mi sembra un po' piccolo". Every
+     Tailwind text-* utility in this codebase is rem-based, so bumping the
+     root size (default 16px) scales the whole app proportionally from one
+     place instead of touching each text-xs/text-sm instance individually. */
+  font-size: 17px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+}
+
+/* Bigger, calmer focus rings — visible but not jarring, important for
+   keyboard/switch-access users and reduces "did that even work?" anxiety. */
+:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--color-primary) 70%, white 10%);
+  outline-offset: 2px;
+  border-radius: 0.5rem;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-surface-2);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@keyframes pop-in {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.animate-pop {
+  animation: pop-in 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+.animate-pulse-soft {
+  animation: pulse-soft 2.2s ease-in-out infinite;
+}
+
+/* Minimal pdf.js text-layer rules (hand-picked from pdfjs-dist's own
+   web/pdf_viewer.css instead of importing it whole) -- that file also ships
+   `color-scheme: only light` and the annotation-editor toolbar, neither of
+   which apply here since we only render pages + selectable text, never the
+   native editor UI. TextLayer.render() (see PdfViewer.tsx) positions each
+   span with inline transform/font-size computed from --total-scale-factor,
+   set per page from the real render scale -- these rules just make the
+   spans invisible-but-selectable and size the container to match. */
+.pdf-page {
+  --user-unit: 1;
+  --total-scale-factor: calc(var(--scale-factor, 1) * var(--user-unit));
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
+  position: relative;
+}
+.textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  text-align: initial;
+  transform-origin: 0 0;
+}
+.textLayer span,
+.textLayer br {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+.textLayer ::selection {
+  background: color-mix(in srgb, var(--color-primary) 45%, transparent);
+}
