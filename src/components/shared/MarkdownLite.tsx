@@ -38,10 +38,33 @@ import 'katex/dist/katex.min.css'
 // left as plain text rather than guessed at.
 const INLINE_PATTERN = /(\$\$[^$]+\$\$|\$[^$]+\$|\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*|_[^_]+_)/g
 
+// Highlighted, not just typeset (2026-08-24, real user request: "qualche
+// background in piu' tipo sulle formule colorato per evidenziarle") -- a
+// formula is the thing most worth an ADHD-scanning eye landing on, same
+// principle as the [LABEL] callouts below, just for math specifically
+// instead of a category. Block math ($$...$$) gets a full highlighted card
+// (own line anyway); inline math ($...$) gets a lighter tinted pill so it
+// still reads as part of the sentence around it.
 function renderMath(expr: string, displayMode: boolean, key: string) {
   const html = katex.renderToString(expr, { throwOnError: false, displayMode, output: 'html' })
-  const Tag = displayMode ? 'div' : 'span'
-  return <Tag key={key} className={displayMode ? 'my-2 overflow-x-auto' : undefined} dangerouslySetInnerHTML={{ __html: html }} />
+  if (displayMode) {
+    return (
+      <div
+        key={key}
+        className="my-3 overflow-x-auto rounded-lg border-l-4 py-3 pl-4 pr-3"
+        style={{ borderColor: 'var(--color-primary)', background: 'color-mix(in srgb, var(--color-primary) 10%, transparent)' }}
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+    )
+  }
+  return (
+    <span
+      key={key}
+      className="rounded px-1.5 py-0.5 mx-0.5"
+      style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' }}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  )
 }
 
 // Recursive on purpose (2026-08-24, real bug found live: "**Problema
@@ -94,22 +117,51 @@ function labelColor(label: string) {
   return LABEL_COLORS[hash % LABEL_COLORS.length]
 }
 
-function renderLine(line: string, key: string) {
+/** Splits a line into its optional leading [LABEL] and the rendered rest --
+ * null label means the line had none. Kept separate from the block wrapper
+ * below so paragraphs and list items can both turn a label into a full
+ * colored callout card, not just an inline chip (2026-08-24, real user
+ * request: "un po' piu' cose colorate... come se stessi scrivendo degli
+ * appunti da cui studiare" -- a label is a whole note category, closer to a
+ * highlighter on the page than a small tag). */
+function splitLabel(line: string): { label: string | null; color: string | null; rest: React.ReactNode[] } {
   const match = line.match(LABEL_RE)
-  if (!match) return renderInline(line, key)
-  const color = labelColor(match[1])
-  const rest = line.slice(match[0].length)
-  return (
+  if (!match) return { label: null, color: null, rest: renderInline(line, 'l') }
+  const label = match[1].trim()
+  return { label, color: labelColor(label), rest: renderInline(line.slice(match[0].length), 'l') }
+}
+
+/** A labeled paragraph/list-item becomes a colored-left-border callout card
+ * (label as a small caption, same color family as the border/background);
+ * an unlabeled one stays a plain paragraph. `as` picks the outer tag so
+ * this works both as a real <li> (kept inside <ul>, valid HTML, styled
+ * directly) and as a standalone <div> wrapping a <p> for non-list lines. */
+function renderCallout(line: string, key: string, as: 'li' | 'div') {
+  const { label, color, rest } = splitLabel(line)
+  if (!label) {
+    return as === 'li' ? <li key={key}>{rest}</li> : (
+      <p key={key} className="leading-relaxed">
+        {rest}
+      </p>
+    )
+  }
+  const style = { borderColor: color!, background: `color-mix(in srgb, ${color} 8%, transparent)` }
+  const inner = (
     <>
-      <span
-        key={`${key}-label`}
-        className="mr-1.5 inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
-        style={{ background: `color-mix(in srgb, ${color} 20%, transparent)`, color }}
-      >
-        {match[1].trim()}
+      <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide" style={{ color: color! }}>
+        {label}
       </span>
-      {renderInline(rest, key)}
+      <span className="leading-relaxed">{rest}</span>
     </>
+  )
+  return as === 'li' ? (
+    <li key={key} className="!list-none rounded-r-lg border-l-4 py-2 pl-3 pr-2 -ml-5" style={style}>
+      {inner}
+    </li>
+  ) : (
+    <div key={key} className="my-2 rounded-r-lg border-l-4 py-2 pl-3 pr-2" style={style}>
+      {inner}
+    </div>
   )
 }
 
@@ -121,10 +173,8 @@ export function MarkdownLite({ text, className }: { text: string; className?: st
   function flushList(key: string) {
     if (listBuffer.length === 0) return
     blocks.push(
-      <ul key={key} className="my-2 list-disc space-y-1.5 pl-5">
-        {listBuffer.map((item, i) => (
-          <li key={i}>{renderLine(item, `${key}-li-${i}`)}</li>
-        ))}
+      <ul key={key} className="my-2 list-disc space-y-1.5 pl-5 marker:text-[var(--color-primary)]">
+        {listBuffer.map((item, i) => renderCallout(item, `${key}-li-${i}`, 'li'))}
       </ul>,
     )
     listBuffer = []
@@ -155,6 +205,18 @@ export function MarkdownLite({ text, className }: { text: string; className?: st
       )
       continue
     }
+    // A line that's PURELY a block formula ("su una riga a sé", exactly
+    // what SUMMARY_PROMPT asks for) is its own block, not a paragraph --
+    // real React hydration warning found live (2026-08-24): renderMath's
+    // display-mode output is a <div>, and a <div> can't be a child of <p>
+    // (invalid HTML) -- happened because a whole-line "$$...$$" was still
+    // being wrapped in <p> by the paragraph fallback below. Same treatment
+    // as headers: bypass the paragraph/callout wrapper entirely.
+    if (/^\$\$[^$]+\$\$$/.test(line)) {
+      flushList(key)
+      blocks.push(renderMath(line.slice(2, -2), true, key))
+      continue
+    }
     // Both "## " and "### " -- the model sometimes reaches for a deeper
     // level on its own (2026-08-24, found live: a real summary used "### "
     // sub-headers that this renderer didn't recognize yet, falling through
@@ -171,7 +233,11 @@ export function MarkdownLite({ text, className }: { text: string; className?: st
     if (line.startsWith('## ')) {
       flushList(key)
       blocks.push(
-        <h3 key={key} className="mt-4 text-base font-semibold text-[var(--color-ink)] first:mt-0">
+        <h3
+          key={key}
+          className="mt-5 border-b-2 pb-1.5 text-base font-semibold text-[var(--color-ink)] first:mt-0"
+          style={{ borderColor: 'color-mix(in srgb, var(--color-primary) 35%, transparent)' }}
+        >
           {renderInline(line.slice(3), key)}
         </h3>,
       )
@@ -182,11 +248,7 @@ export function MarkdownLite({ text, className }: { text: string; className?: st
       continue
     }
     flushList(key)
-    blocks.push(
-      <p key={key} className="leading-relaxed">
-        {renderLine(line, key)}
-      </p>,
-    )
+    blocks.push(renderCallout(line, key, 'div'))
   }
   flushList('tail')
 
