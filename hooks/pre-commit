@@ -12,6 +12,14 @@
 # 2. Warns (never blocks) about cognitive_rpg <-> Jarvis mirror drift via
 #    tools/mirror_drift.py --warn-only -- a fragile-by-construction signal
 #    (file mtime via git commit time) that flags, never gates.
+# 3. Warns (never blocks) about supabase/schema.sql columns that look added
+#    to an existing table's CREATE TABLE body without their ALTER TABLE ADD
+#    COLUMN IF NOT EXISTS companion (scripts/schema_drift_check.mjs) --
+#    2026-08-25, after the exact same bug shape hit events.type,
+#    skills.domain/status, and profiles.research_consent in one day. Same
+#    "flag, never gate" philosophy as mirror_drift.py: a false positive here
+#    (a dated comment that isn't really a later addition) is cheap to skim
+#    past; a missed real one is the thing worth catching.
 set -e
 
 node scripts/readme_update.mjs
@@ -21,4 +29,5 @@ set +e
 PYTHON="../.venv/Scripts/python.exe"
 if [ ! -x "$PYTHON" ]; then PYTHON="python"; fi
 "$PYTHON" ../tools/mirror_drift.py --warn-only
+node scripts/schema_drift_check.mjs
 exit 0
