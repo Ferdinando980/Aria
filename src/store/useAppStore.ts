@@ -19,6 +19,7 @@ import type {
   ChapterSection,
   Flashcard,
   MaterialSummary,
+  CheatStudySolution,
   TextEdit,
 } from '../lib/types'
 import { XP_PER_LEVEL } from '../lib/types'
@@ -99,6 +100,7 @@ interface AppState {
   flashcards: Flashcard[]
   summaries: MaterialSummary[]
   textEdits: TextEdit[]
+  cheatStudySolutions: CheatStudySolution[]
 
   setCurrentUserId: (id: string | undefined) => void
   markLocalDataPushed: (userId: string) => void
@@ -122,6 +124,7 @@ interface AppState {
     flashcards?: any[]
     summaries?: any[]
     textEdits?: any[]
+    cheatStudySolutions?: any[]
   }) => void
 
   /** Return also reports how many previously-archived skills this Subject's
@@ -229,6 +232,8 @@ interface AppState {
   // instead of piling up.
   setSummary: (materialId: string, chapterId: string, sectionId: string | undefined, content: string) => void
   removeSummary: (id: string) => void
+  setCheatStudySolution: (examMaterialId: string, chapterId: string, sectionId: string | undefined, content: string) => void
+  removeCheatStudySolution: (id: string) => void
 
   // Text edits ("modifica testo" overlay) -- upserts by matching an existing
   // edit at (materialId, page, rect) within a tiny rounding tolerance, so
@@ -357,6 +362,7 @@ export const useAppStore = create<AppState>()(
       chapters: [],
       flashcards: [],
       summaries: [],
+      cheatStudySolutions: [],
       textEdits: [],
 
       setCurrentUserId: (id) => set({ currentUserId: id }),
@@ -617,6 +623,19 @@ export const useAppStore = create<AppState>()(
             })
           }
 
+          const byCheatStudySolution = new Map(state.cheatStudySolutions.map((s) => [s.id, s]))
+          for (const r of data.cheatStudySolutions ?? []) {
+            byCheatStudySolution.set(r.id, {
+              id: r.id,
+              examMaterialId: r.exam_material_id,
+              chapterId: r.chapter_id,
+              sectionId: r.section_id ?? undefined,
+              content: r.content,
+              createdAt: r.created_at,
+              updatedAt: r.updated_at,
+            })
+          }
+
           const byTextEdit = new Map(state.textEdits.map((t) => [t.id, t]))
           for (const r of data.textEdits ?? []) {
             byTextEdit.set(r.id, {
@@ -653,6 +672,7 @@ export const useAppStore = create<AppState>()(
             chapters: pruneDeleted(Array.from(byChapter.values()), new Set((data.chapters ?? []).map((r) => r.id))),
             flashcards: pruneDeleted(Array.from(byFlashcard.values()), new Set((data.flashcards ?? []).map((r) => r.id))),
             summaries: pruneDeleted(Array.from(bySummary.values()), new Set((data.summaries ?? []).map((r) => r.id))),
+            cheatStudySolutions: pruneDeleted(Array.from(byCheatStudySolution.values()), new Set((data.cheatStudySolutions ?? []).map((r) => r.id))),
             textEdits: pruneDeleted(Array.from(byTextEdit.values()), new Set((data.textEdits ?? []).map((r) => r.id))),
           }
         })
@@ -832,6 +852,10 @@ export const useAppStore = create<AppState>()(
         // would just be clutter with no path back, not a feature.
         const removedFlashcards = get().flashcards.filter((f) => f.materialId === id)
         const removedSummaries = get().summaries.filter((s) => s.materialId === id)
+        // Cheat Study solutions are keyed on the EXAM material, not the study
+        // material they were grounded in -- same "derived, no path back"
+        // reasoning as summaries/flashcards above.
+        const removedCheatStudySolutions = get().cheatStudySolutions.filter((c) => c.examMaterialId === id)
         const removedChapters = get().chapters.filter((c) => c.materialId === id)
         const removedHighlights = get().highlights.filter((h) => h.materialId === id)
         const removedTextEdits = get().textEdits.filter((t) => t.materialId === id)
@@ -848,6 +872,7 @@ export const useAppStore = create<AppState>()(
             archivedSkills: [...s.archivedSkills, ...archived],
             flashcards: s.flashcards.filter((f) => f.materialId !== id),
             summaries: s.summaries.filter((x) => x.materialId !== id),
+            cheatStudySolutions: s.cheatStudySolutions.filter((x) => x.examMaterialId !== id),
             chapters: s.chapters.filter((c) => c.materialId !== id),
             highlights: s.highlights.filter((h) => h.materialId !== id),
             textEdits: s.textEdits.filter((t) => t.materialId !== id),
@@ -860,6 +885,7 @@ export const useAppStore = create<AppState>()(
           syncDelete('materials', u, id)
           for (const f of removedFlashcards) syncDelete('flashcards', u, f.id)
           for (const sm of removedSummaries) syncDelete('summaries', u, sm.id)
+          for (const cs of removedCheatStudySolutions) syncDelete('cheat_study_solutions', u, cs.id)
           for (const c of removedChapters) syncDelete('material_chapters', u, c.id)
           for (const h of removedHighlights) syncDelete('material_highlights', u, h.id)
           for (const t of removedTextEdits) syncDelete('text_edits', u, t.id)
@@ -1561,6 +1587,29 @@ export const useAppStore = create<AppState>()(
         if (canSync(u)) syncDelete('summaries', u, id)
       },
 
+      setCheatStudySolution: (examMaterialId, chapterId, sectionId, content) => {
+        const now = nowIso()
+        const existing = get().cheatStudySolutions.find((s) => s.examMaterialId === examMaterialId && s.chapterId === chapterId && s.sectionId === sectionId)
+        const solution: CheatStudySolution = existing
+          ? { ...existing, content, updatedAt: now }
+          : { id: uid(), examMaterialId, chapterId, sectionId, content, createdAt: now, updatedAt: now }
+        set((s) => ({ cheatStudySolutions: [...s.cheatStudySolutions.filter((x) => x.id !== solution.id), solution] }))
+        const u = get().currentUserId
+        if (canSync(u))
+          syncUpsert('cheat_study_solutions', u, {
+            id: solution.id,
+            exam_material_id: solution.examMaterialId,
+            chapter_id: solution.chapterId,
+            section_id: solution.sectionId,
+            content: solution.content,
+          })
+      },
+      removeCheatStudySolution: (id) => {
+        set((s) => ({ cheatStudySolutions: s.cheatStudySolutions.filter((x) => x.id !== id) }))
+        const u = get().currentUserId
+        if (canSync(u)) syncDelete('cheat_study_solutions', u, id)
+      },
+
       setTextEdit: (materialId, page, rect, replacement) => {
         const now = nowIso()
         const existing = get().textEdits.find(
@@ -1615,6 +1664,7 @@ export const useAppStore = create<AppState>()(
         chapters: s.chapters,
         flashcards: s.flashcards,
         summaries: s.summaries,
+        cheatStudySolutions: s.cheatStudySolutions,
         textEdits: s.textEdits,
       }),
     },

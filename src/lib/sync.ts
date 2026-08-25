@@ -66,6 +66,7 @@ export async function syncPushAll(
     chapters: import('./types').MaterialChapter[]
     flashcards: import('./types').Flashcard[]
     summaries: import('./types').MaterialSummary[]
+    cheatStudySolutions: import('./types').CheatStudySolution[]
     textEdits: import('./types').TextEdit[]
   },
 ): Promise<{ ok: boolean; failedTables: string[] }> {
@@ -221,6 +222,9 @@ export async function syncPushAll(
   for (const s of data.summaries) {
     pushRow('summaries', { id: s.id, user_id: userId, material_id: s.materialId, chapter_id: s.chapterId, section_id: s.sectionId, content: s.content })
   }
+  for (const c of data.cheatStudySolutions) {
+    pushRow('cheat_study_solutions', { id: c.id, user_id: userId, exam_material_id: c.examMaterialId, chapter_id: c.chapterId, section_id: c.sectionId, content: c.content })
+  }
   for (const t of data.textEdits) {
     pushRow('text_edits', {
       id: t.id,
@@ -250,7 +254,7 @@ export async function syncPushAll(
 
 export async function syncPullAll(userId: string) {
   if (!supabase) return null
-  const [subjects, materials, tasks, events, profile, skills, skillEvents, highlights, chapters, flashcards, summaries, textEdits] = await Promise.all([
+  const [subjects, materials, tasks, events, profile, skills, skillEvents, highlights, chapters, flashcards, summaries, cheatStudySolutions, textEdits] = await Promise.all([
     supabase.from('subjects').select('*').eq('user_id', userId),
     supabase.from('materials').select('*').eq('user_id', userId),
     supabase.from('tasks').select('*').eq('user_id', userId),
@@ -262,6 +266,7 @@ export async function syncPullAll(userId: string) {
     supabase.from('material_chapters').select('*').eq('user_id', userId),
     supabase.from('flashcards').select('*').eq('user_id', userId),
     supabase.from('summaries').select('*').eq('user_id', userId),
+    supabase.from('cheat_study_solutions').select('*').eq('user_id', userId),
     supabase.from('text_edits').select('*').eq('user_id', userId),
   ])
   return {
@@ -276,6 +281,7 @@ export async function syncPullAll(userId: string) {
     chapters: chapters.data ?? [],
     flashcards: flashcards.data ?? [],
     summaries: summaries.data ?? [],
+    cheatStudySolutions: cheatStudySolutions.data ?? [],
     textEdits: textEdits.data ?? [],
   }
 }

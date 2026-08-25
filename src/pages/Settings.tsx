@@ -24,6 +24,7 @@ const DOMAIN_LABEL: Record<string, string> = {
   flashcards: 'Flashcard',
   summary: 'Riassunti',
   formula_example: 'Esempi numerici',
+  cheat_study: 'Cheat Study',
 }
 const STATUS_LABEL: Record<string, string> = { DRAFT: 'in prova', VERIFIED: 'verificata', PERSONAL_NOTE: 'appunto personale', REJECTED: 'scartata' }
 

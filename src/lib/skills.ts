@@ -417,6 +417,7 @@ export function domainClass(domain: SkillDomain): 'procedure' | 'content' {
     case 'material_chat':
     case 'material_knowledge':
     case 'study_plan': // always routed with a material/subject tag -- see MaterialPlanPanel/StudyPlanPanel
+    case 'cheat_study': // always routed with the exam material's own id -- same reasoning as study_plan
     case 'chat': // no material scoping to rule out topic-specific content; defaulted conservatively
       return 'content'
     case 'task_breakdown':
@@ -531,7 +532,7 @@ export interface DomainWasteReport {
   lift: number | null
 }
 
-const DOMAINS: SkillDomain[] = ['chat', 'task_breakdown', 'material_chat', 'study_plan', 'pdf_edit', 'material_knowledge', 'chapters', 'flashcards', 'summary', 'formula_example']
+const DOMAINS: SkillDomain[] = ['chat', 'task_breakdown', 'material_chat', 'study_plan', 'pdf_edit', 'material_knowledge', 'chapters', 'flashcards', 'summary', 'formula_example', 'cheat_study']
 
 export function retrievalWasteAnalysis(events: SkillEvent[]): DomainWasteReport[] {
   return DOMAINS.map((domain) => {

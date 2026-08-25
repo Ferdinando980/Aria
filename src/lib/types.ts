@@ -175,6 +175,24 @@ export interface MaterialSummary {
   updatedAt: string
 }
 
+/** Cheat Study (2026-08-25) — a past-exam exercise (one chapter/section of a
+ * material used AS an exam paper, reusing the existing chapter-detection
+ * feature rather than inventing a separate "exam" concept) paired with an
+ * AI-explained solution grounded in the user's OWN real study material from
+ * the same subject (found by tag overlap, see CheatStudy.tsx) — never
+ * generated from the exercise text alone. `examMaterialId`/`chapterId`/
+ * `sectionId` identify the exercise being solved, same triple shape as
+ * MaterialSummary's material/chapter/section scoping. */
+export interface CheatStudySolution {
+  id: ID
+  examMaterialId: ID
+  chapterId: ID
+  sectionId?: ID
+  content: string
+  createdAt: string
+  updatedAt: string
+}
+
 export interface SubTask {
   id: ID
   title: string
@@ -400,7 +418,7 @@ export const XP_PER_LEVEL = 120
 // become future sharing candidates; 'content'-class skills top out at
 // PERSONAL_NOTE (see SkillStatus) and are never eligible, regardless of
 // consent -- consent is necessary but not sufficient, per that discussion.
-export type SkillDomain = 'chat' | 'task_breakdown' | 'material_chat' | 'study_plan' | 'pdf_edit' | 'material_knowledge' | 'chapters' | 'flashcards' | 'summary' | 'formula_example'
+export type SkillDomain = 'chat' | 'task_breakdown' | 'material_chat' | 'study_plan' | 'pdf_edit' | 'material_knowledge' | 'chapters' | 'flashcards' | 'summary' | 'formula_example' | 'cheat_study'
 // 'ARCHIVED' is used ONLY inside AppState.archivedSkills (useAppStore.ts),
 // never inside the live `skills` array -- keeps it from ever being confused
 // with 'REJECTED' (failed the evidence bar) in the DRAFT/VERIFIED/REJECTED

@@ -591,6 +591,33 @@ Adatta la STRUTTURA di ogni sezione al TIPO di conoscenza che contiene, invece d
 - Se il contenuto non rientra chiaramente in nessuno di questi (narrativo, discorsivo, contestuale), usa la struttura generica di sempre (concetti chiave + relazioni) -- non forzarlo in uno schema che non gli si addice.
 Un capitolo può mescolare più tipi in sezioni diverse (es. una definizione seguita da un algoritmo che la usa) -- scegli la struttura sezione per sezione, non una sola per l'intero riassunto.`
 
+// Cheat Study (2026-08-25, real user request: "andremo a cercare nel
+// materiale di studio dov'è che c'è l'argomento che interessa quell'esercizio
+// ... non andrà a generarle [le parti], ma permetterà la visualizzazione del
+// materiale ... la soluzione [è] generabile sul materiale di prova"). The
+// exercise text comes from a material used AS a past exam (chapter
+// detection reused, no separate "exam" concept); studyContext is the REAL
+// text of the study-material sections CheatStudy.tsx matched by tag overlap
+// -- never generate from the exercise alone, always grounded in the user's
+// own material, same discipline fs_cite_before_claim checks for elsewhere.
+const CHEAT_STUDY_PROMPT = `Spieghi la soluzione di un esercizio d'esame usando SOLO il materiale di studio reale fornito, per una persona con ADHD che sta usando la traccia per esercitarsi.
+Regole, IMPORTANTI:
+- Basati SOLO sul materiale di studio fornito qui sotto -- non inventare formule, teoremi o passaggi che non ci sono. Se il materiale non copre completamente l'esercizio, dillo esplicitamente in una riga all'inizio ("Il materiale non copre [x], la spiegazione di quella parte è generica") invece di fingere che sia tutto coperto.
+- Struttura: prima il RAGIONAMENTO (perché si risolve così, quale concetto del materiale si applica), poi i PASSI in ordine, infine il RISULTATO finale se l'esercizio ne ha uno.
+- Paragrafi brevi, elenchi puntati per i passi, **grassetto** sul concetto chiave di ogni passo -- stessa cura di un riassunto, non un muro di testo.
+- Formule matematiche in LaTeX vero ($...$ inline, $$...$$ isolata), mai a parole.
+- Testo semplice (nessun JSON), niente introduzioni tipo "Ecco la soluzione".`
+
+export async function generateCheatStudySolution(exerciseTitle: string, exerciseText: string, studyContext: string, skillContext?: string): Promise<string> {
+  const key = getGeminiKey()
+  if (!key) throw new Error('missing_key')
+  if (!studyContext.trim()) return ''
+
+  const prompt = `Esercizio: ${exerciseTitle}\n\nTesto dell'esercizio:\n${exerciseText.slice(0, 6000)}\n\nMateriale di studio reale trovato per questo argomento:\n${studyContext.slice(0, 15000)}`
+  const result = await generateWithFallback(key, { systemInstruction: withSkillContext(CHEAT_STUDY_PROMPT, skillContext) }, (model) => model.generateContent(prompt))
+  return result.response.text().trim()
+}
+
 export async function generateSummary(materialTitle: string, scopeLabel: string, text: string, skillContext?: string): Promise<string> {
   const key = getGeminiKey()
   if (!key) throw new Error('missing_key')

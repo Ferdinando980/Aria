@@ -123,7 +123,7 @@ create table if not exists skills (
   user_id uuid not null references auth.users(id) on delete cascade,
   version int not null default 1,
   title text not null,
-  domain text not null check (domain in ('chat', 'task_breakdown', 'material_chat', 'study_plan', 'pdf_edit', 'material_knowledge', 'chapters', 'flashcards', 'summary', 'formula_example')),
+  domain text not null check (domain in ('chat', 'task_breakdown', 'material_chat', 'study_plan', 'pdf_edit', 'material_knowledge', 'chapters', 'flashcards', 'summary', 'formula_example', 'cheat_study')),
   capability_tags text[] not null default '{}',
   content text not null,
   status text not null default 'DRAFT' check (status in ('DRAFT', 'VERIFIED', 'PERSONAL_NOTE', 'REJECTED', 'ARCHIVED')),
@@ -245,6 +245,23 @@ create table if not exists summaries (
 );
 alter table summaries add column if not exists section_id uuid;
 
+-- Cheat Study (2026-08-25): un esercizio (chapter/section di un materiale
+-- usato COME traccia d'esame, riusando il rilevamento capitoli esistente
+-- invece di un concetto "esame" separato) + la sua soluzione spiegata,
+-- generata sul materiale di studio VERO trovato per overlap di tag nella
+-- stessa materia -- mai sul solo testo dell'esercizio. Stessa forma di
+-- summaries apposta, stesso pattern un-solo-record-per-scope.
+create table if not exists cheat_study_solutions (
+  id uuid primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  exam_material_id uuid not null references materials(id) on delete cascade,
+  chapter_id uuid references material_chapters(id) on delete set null,
+  section_id uuid,
+  content text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 -- Correzioni visive di testo sul PDF ("modifica testo", 2026-08-20) -- NON
 -- riscrive il file PDF: copre il testo originale con un rettangolo e disegna
 -- la sostituzione sopra al momento del rendering. Vedi TextEdit in types.ts
@@ -285,6 +302,7 @@ alter table material_chapters enable row level security;
 alter table flashcards enable row level security;
 alter table summaries enable row level security;
 alter table text_edits enable row level security;
+alter table cheat_study_solutions enable row level security;
 
 -- drop-if-exists prima di ogni create policy: questo file è pensato per
 -- essere rieseguibile su un progetto che ha già parte delle tabelle (2026-08-20,
@@ -316,6 +334,7 @@ drop policy if exists "own rows" on flashcards;
 create policy "own rows" on flashcards for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 drop policy if exists "own rows" on summaries;
 create policy "own rows" on summaries for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "own rows" on cheat_study_solutions for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 drop policy if exists "own rows" on text_edits;
 create policy "own rows" on text_edits for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
