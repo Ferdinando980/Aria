@@ -67,6 +67,7 @@ export async function syncPushAll(
     flashcards: import('./types').Flashcard[]
     summaries: import('./types').MaterialSummary[]
     cheatStudySolutions: import('./types').CheatStudySolution[]
+    cheatStudyExercises: import('./types').CheatStudyExercise[]
     textEdits: import('./types').TextEdit[]
   },
 ): Promise<{ ok: boolean; failedTables: string[] }> {
@@ -110,6 +111,7 @@ export async function syncPushAll(
       ai_notes: m.aiNotes,
       annotation_data_url: m.annotations ? JSON.stringify(m.annotations) : null,
       area_of_interest: m.areaOfInterest,
+      cheat_study_linked_ids: m.cheatStudyLinkedMaterialIds ?? null,
     })
   }
   for (const t of data.tasks) {
@@ -214,6 +216,7 @@ export async function syncPushAll(
       end_page: c.endPage,
       order: c.order,
       subsections: c.subsections,
+      transcribed_text: c.transcribedText ?? null,
     })
   }
   for (const f of data.flashcards) {
@@ -224,6 +227,9 @@ export async function syncPushAll(
   }
   for (const c of data.cheatStudySolutions) {
     pushRow('cheat_study_solutions', { id: c.id, user_id: userId, exam_material_id: c.examMaterialId, chapter_id: c.chapterId, section_id: c.sectionId, content: c.content })
+  }
+  for (const c of data.cheatStudyExercises) {
+    pushRow('cheat_study_exercises', { id: c.id, user_id: userId, exam_material_id: c.examMaterialId, chapter_id: c.chapterId, section_id: c.sectionId, content: c.content })
   }
   for (const t of data.textEdits) {
     pushRow('text_edits', {
@@ -254,7 +260,7 @@ export async function syncPushAll(
 
 export async function syncPullAll(userId: string) {
   if (!supabase) return null
-  const [subjects, materials, tasks, events, profile, skills, skillEvents, highlights, chapters, flashcards, summaries, cheatStudySolutions, textEdits] = await Promise.all([
+  const [subjects, materials, tasks, events, profile, skills, skillEvents, highlights, chapters, flashcards, summaries, cheatStudySolutions, cheatStudyExercises, textEdits] = await Promise.all([
     supabase.from('subjects').select('*').eq('user_id', userId),
     supabase.from('materials').select('*').eq('user_id', userId),
     supabase.from('tasks').select('*').eq('user_id', userId),
@@ -267,6 +273,7 @@ export async function syncPullAll(userId: string) {
     supabase.from('flashcards').select('*').eq('user_id', userId),
     supabase.from('summaries').select('*').eq('user_id', userId),
     supabase.from('cheat_study_solutions').select('*').eq('user_id', userId),
+    supabase.from('cheat_study_exercises').select('*').eq('user_id', userId),
     supabase.from('text_edits').select('*').eq('user_id', userId),
   ])
   return {
@@ -282,6 +289,7 @@ export async function syncPullAll(userId: string) {
     flashcards: flashcards.data ?? [],
     summaries: summaries.data ?? [],
     cheatStudySolutions: cheatStudySolutions.data ?? [],
+    cheatStudyExercises: cheatStudyExercises.data ?? [],
     textEdits: textEdits.data ?? [],
   }
 }

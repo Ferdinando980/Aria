@@ -33,6 +33,17 @@ create table if not exists materials (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+-- area_of_interest: referenced by code (removeSubject's archive path,
+-- hydrateFromRemote's archived/live discriminator) since that feature
+-- shipped, but never actually declared anywhere in this file -- found live
+-- 2026-08-26 via information_schema.columns while adding cheat_study_linked_ids
+-- to this same table: the real DB was missing it too, not just this file.
+-- syncUpsert's fail-open swallowed the error the whole time, so archiving a
+-- material by deleting its subject has silently never synced.
+alter table materials add column if not exists area_of_interest text;
+-- Cheat Study (2026-08-26): materials explicitly linked to an exam-paper
+-- material, opt-in session config -- see types.ts's Material.cheatStudyLinkedMaterialIds.
+alter table materials add column if not exists cheat_study_linked_ids uuid[];
 alter table materials add column if not exists file_updated_at timestamptz;
 
 create table if not exists tasks (
@@ -50,6 +61,15 @@ create table if not exists tasks (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+-- Real bug found live (2026-08-26): Task.pageRange (types.ts, "studia pagine
+-- X-Y" next to a study-plan-generated task, real user request 2026-08-24)
+-- was never in this table -- addTask/updateTask/completeTask's syncUpsert
+-- calls didn't send it either, so it existed only in memory until the next
+-- hydrateFromRemote pull (which runs on every session refresh, not just
+-- first login) silently wiped it, rebuilding the task from remote fields
+-- that never included it. Same bug shape as this file's other "column added
+-- to the client type, never given its own migration" incidents.
+alter table tasks add column if not exists page_range jsonb;
 
 create table if not exists events (
   id uuid primary key,
@@ -209,6 +229,10 @@ create table if not exists material_chapters (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+-- Cheat Study image support (2026-08-26): set only for a chapter detected
+-- from a photo/scan (Gemini vision transcribed it directly, no real PDF
+-- page behind it) -- see types.ts's MaterialChapter.transcribedText.
+alter table material_chapters add column if not exists transcribed_text text;
 
 -- Flashcard generate da un materiale, opzionalmente scoped a un capitolo
 -- (chapter_id null = generate dall'intero materiale). Revisionate con lo
@@ -262,6 +286,20 @@ create table if not exists cheat_study_solutions (
   updated_at timestamptz not null default now()
 );
 
+-- Sibling table (2026-08-26, real user correction: "e ti permette di
+-- generare esercizi equivalenti") -- same shape, same scoping triple, a
+-- second Cheat Study output shown alongside the solution, not instead of it.
+create table if not exists cheat_study_exercises (
+  id uuid primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  exam_material_id uuid not null references materials(id) on delete cascade,
+  chapter_id uuid references material_chapters(id) on delete set null,
+  section_id uuid,
+  content text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 -- Correzioni visive di testo sul PDF ("modifica testo", 2026-08-20) -- NON
 -- riscrive il file PDF: copre il testo originale con un rettangolo e disegna
 -- la sostituzione sopra al momento del rendering. Vedi TextEdit in types.ts
@@ -303,6 +341,7 @@ alter table flashcards enable row level security;
 alter table summaries enable row level security;
 alter table text_edits enable row level security;
 alter table cheat_study_solutions enable row level security;
+alter table cheat_study_exercises enable row level security;
 
 -- drop-if-exists prima di ogni create policy: questo file è pensato per
 -- essere rieseguibile su un progetto che ha già parte delle tabelle (2026-08-20,
@@ -335,6 +374,7 @@ create policy "own rows" on flashcards for all using (auth.uid() = user_id) with
 drop policy if exists "own rows" on summaries;
 create policy "own rows" on summaries for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "own rows" on cheat_study_solutions for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "own rows" on cheat_study_exercises for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 drop policy if exists "own rows" on text_edits;
 create policy "own rows" on text_edits for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 

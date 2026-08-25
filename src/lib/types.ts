@@ -51,6 +51,15 @@ export interface Material {
    * reads as "I meant to remove this," not "archive this whole area." */
   areaOfInterest?: string
   createdAt: string
+  /** Cheat Study (2026-08-26): materials the user explicitly linked to THIS
+   * material when it's used as an exam paper -- an opt-in session config,
+   * never the search input itself (the exam paper's own exercises are). When
+   * set, CheatStudy.tsx searches for relevant sections ONLY within these
+   * linked materials' chapters (by tag overlap with each exercise's own
+   * text, then existing material_knowledge skills for the matched scope) --
+   * never a full-text/online search. Undefined or empty = no material
+   * linked, generation falls back to plain Gemini with no grounding. */
+  cheatStudyLinkedMaterialIds?: string[]
 }
 
 /**
@@ -105,6 +114,13 @@ export interface ChapterSection {
   title: string
   startPage: number
   endPage: number
+  /** Cheat Study image support (2026-08-26): set ONLY for a section detected
+   * from a photo/scan (Gemini vision transcribed it directly, no PDF page to
+   * extract from later) -- when present, callers use this text as-is
+   * instead of calling getChapterScopedText, which is meaningless for a
+   * material with no real PDF pages. Undefined for every PDF-derived
+   * section, the overwhelming majority. */
+  transcribedText?: string
 }
 
 /**
@@ -130,6 +146,10 @@ export interface MaterialChapter {
   subsections: ChapterSection[]
   createdAt: string
   updatedAt: string
+  /** See ChapterSection.transcribedText -- same idea, for a chapter with no
+   * subsections of its own (transcribed directly, whole chapter = whole
+   * detected exercise on that image). */
+  transcribedText?: string
 }
 
 /** A front/back flashcard generated from one material, ALWAYS scoped to a
@@ -184,6 +204,20 @@ export interface MaterialSummary {
  * `sectionId` identify the exercise being solved, same triple shape as
  * MaterialSummary's material/chapter/section scoping. */
 export interface CheatStudySolution {
+  id: ID
+  examMaterialId: ID
+  chapterId: ID
+  sectionId?: ID
+  content: string
+  createdAt: string
+  updatedAt: string
+}
+
+/** The other Cheat Study output (2026-08-26, real user correction: "e ti
+ * permette di generare esercizi equivalenti") -- same scoping triple as
+ * CheatStudySolution, a sibling not a replacement: both are shown for the
+ * same exercise. */
+export interface CheatStudyExercise {
   id: ID
   examMaterialId: ID
   chapterId: ID

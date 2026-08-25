@@ -125,6 +125,7 @@ function SyncBootstrap() {
           flashcards: state.flashcards,
           summaries: state.summaries,
           cheatStudySolutions: state.cheatStudySolutions,
+          cheatStudyExercises: state.cheatStudyExercises,
           textEdits: state.textEdits,
         })
         // Only mark done on a FULLY successful push (2026-08-24, prompted by

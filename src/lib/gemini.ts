@@ -451,6 +451,38 @@ export interface ChapterSuggestion {
   subsections?: { title: string; startPage: number; endPage: number }[]
 }
 
+// Cheat Study image support (2026-08-26, real user request: "riconosce gli
+// esercizi da immagini anche?"). A photo/scan has no PDF pages to point back
+// to later -- unlike generateChapters, this asks the model to TRANSCRIBE
+// each exercise's full text directly, once, here -- every later step
+// (matching, generation) reads that transcription (types.ts's
+// MaterialChapter/ChapterSection.transcribedText) instead of re-sending the
+// image or re-calling vision again.
+const IMAGE_EXERCISES_PROMPT = `Guarda l'immagine di una traccia d'esame e individua i singoli esercizi/quesiti distinti, trascrivendo il testo REALE di ciascuno per intero (non riassumerlo).
+Regole, IMPORTANTI:
+- Rispondi SOLO con un array JSON valido, nessun markdown, nessuna introduzione: [{"title":"Esercizio 1","text":"testo completo trascritto..."}, ...]
+- Un elemento per ogni esercizio/quesito distinto visibile nell'immagine, nell'ordine in cui appaiono.
+- "text" e' la trascrizione COMPLETA e fedele di quell'esercizio (enunciato, dati, richieste) -- non aggiungere né inventare nulla che non sia leggibile nell'immagine.
+- "title" breve (es. "Esercizio 1", o il titolo reale se presente), stessa lingua del documento.
+- Se l'immagine non e' leggibile o non contiene esercizi riconoscibili, rispondi con un array vuoto [].`
+
+export async function generateExercisesFromImage(imageBase64: string, mimeType: string): Promise<{ title: string; text: string }[]> {
+  const key = getGeminiKey()
+  if (!key) throw new Error('missing_key')
+
+  const result = await generateWithFallback(
+    key,
+    { systemInstruction: IMAGE_EXERCISES_PROMPT, generationConfig: JSON_GENERATION_CONFIG },
+    (model) => model.generateContent([{ inlineData: { data: imageBase64, mimeType } }]),
+  )
+  try {
+    return parseJsonArray<{ title: string; text: string }>(result.response.text()).filter((e) => e.title && e.text)
+  } catch (err) {
+    console.error('[generateExercisesFromImage] failed to parse model output', err, result.response.text())
+    return []
+  }
+}
+
 function parseJsonArray<T>(raw: string): T[] {
   // Models sometimes wrap JSON in ```json fences despite instructions not to -- strip them before parsing.
   const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '')
@@ -591,30 +623,57 @@ Adatta la STRUTTURA di ogni sezione al TIPO di conoscenza che contiene, invece d
 - Se il contenuto non rientra chiaramente in nessuno di questi (narrativo, discorsivo, contestuale), usa la struttura generica di sempre (concetti chiave + relazioni) -- non forzarlo in uno schema che non gli si addice.
 Un capitolo può mescolare più tipi in sezioni diverse (es. una definizione seguita da un algoritmo che la usa) -- scegli la struttura sezione per sezione, non una sola per l'intero riassunto.`
 
-// Cheat Study (2026-08-25, real user request: "andremo a cercare nel
-// materiale di studio dov'è che c'è l'argomento che interessa quell'esercizio
-// ... non andrà a generarle [le parti], ma permetterà la visualizzazione del
-// materiale ... la soluzione [è] generabile sul materiale di prova"). The
-// exercise text comes from a material used AS a past exam (chapter
-// detection reused, no separate "exam" concept); studyContext is the REAL
-// text of the study-material sections CheatStudy.tsx matched by tag overlap
-// -- never generate from the exercise alone, always grounded in the user's
-// own material, same discipline fs_cite_before_claim checks for elsewhere.
-const CHEAT_STUDY_PROMPT = `Spieghi la soluzione di un esercizio d'esame usando SOLO il materiale di studio reale fornito, per una persona con ADHD che sta usando la traccia per esercitarsi.
+// Cheat Study (2026-08-25/26, real user correction on the first design: la
+// TRACCIA determina cosa cercare, il materiale COLLEGATO -- opzionale --
+// determina dove cercarlo. Non e' l'input: e' una fonte facoltativa.
+// studyContext viene DA quel materiale collegato (sezione trovata via
+// overlap di tag + skill già distillate, mai full-text/online) quando esiste
+// -- se l'utente non ha collegato nulla, studyContext e' null e Gemini
+// costruisce comunque il materiale necessario dalla propria conoscenza,
+// dichiarandolo esplicitamente invece di fingere di aver letto qualcosa che
+// non esiste (stessa disciplina di fs_uncertainty_disclosure_check).
+const GROUNDED_NOTE = `Basati SOLO sul materiale di studio reale fornito qui sotto -- non inventare formule, teoremi o passaggi che non ci sono. Se il materiale non copre completamente l'esercizio, dillo esplicitamente in una riga all'inizio ("Il materiale non copre [x], la spiegazione di quella parte è generica") invece di fingere che sia tutto coperto.`
+const UNGROUNDED_NOTE = `Non hai nessun materiale di studio specifico dell'utente collegato -- usa la tua conoscenza generale dell'argomento per costruire comunque una spiegazione utile, ma dillo esplicitamente in una riga all'inizio ("Nessun materiale collegato -- spiegazione basata su conoscenza generale, verificala col tuo corso") invece di far credere che venga dal materiale dell'utente.`
+
+const CHEAT_STUDY_PROMPT = `Spieghi la soluzione di un esercizio d'esame, per una persona con ADHD che sta usando la traccia per esercitarsi.
 Regole, IMPORTANTI:
-- Basati SOLO sul materiale di studio fornito qui sotto -- non inventare formule, teoremi o passaggi che non ci sono. Se il materiale non copre completamente l'esercizio, dillo esplicitamente in una riga all'inizio ("Il materiale non copre [x], la spiegazione di quella parte è generica") invece di fingere che sia tutto coperto.
-- Struttura: prima il RAGIONAMENTO (perché si risolve così, quale concetto del materiale si applica), poi i PASSI in ordine, infine il RISULTATO finale se l'esercizio ne ha uno.
+{{GROUNDING_NOTE}}
+- Struttura: prima il RAGIONAMENTO (perché si risolve così, quale concetto si applica), poi i PASSI in ordine, infine il RISULTATO finale se l'esercizio ne ha uno.
 - Paragrafi brevi, elenchi puntati per i passi, **grassetto** sul concetto chiave di ogni passo -- stessa cura di un riassunto, non un muro di testo.
 - Formule matematiche in LaTeX vero ($...$ inline, $$...$$ isolata), mai a parole.
 - Testo semplice (nessun JSON), niente introduzioni tipo "Ecco la soluzione".`
 
-export async function generateCheatStudySolution(exerciseTitle: string, exerciseText: string, studyContext: string, skillContext?: string): Promise<string> {
+export async function generateCheatStudySolution(exerciseTitle: string, exerciseText: string, studyContext: string | null, skillContext?: string): Promise<string> {
   const key = getGeminiKey()
   if (!key) throw new Error('missing_key')
-  if (!studyContext.trim()) return ''
 
-  const prompt = `Esercizio: ${exerciseTitle}\n\nTesto dell'esercizio:\n${exerciseText.slice(0, 6000)}\n\nMateriale di studio reale trovato per questo argomento:\n${studyContext.slice(0, 15000)}`
-  const result = await generateWithFallback(key, { systemInstruction: withSkillContext(CHEAT_STUDY_PROMPT, skillContext) }, (model) => model.generateContent(prompt))
+  const grounded = Boolean(studyContext?.trim())
+  const prompt = grounded
+    ? `Esercizio: ${exerciseTitle}\n\nTesto dell'esercizio:\n${exerciseText.slice(0, 6000)}\n\nMateriale di studio reale trovato per questo argomento:\n${studyContext!.slice(0, 15000)}`
+    : `Esercizio: ${exerciseTitle}\n\nTesto dell'esercizio:\n${exerciseText.slice(0, 6000)}`
+  const prompt_ = CHEAT_STUDY_PROMPT.replace('{{GROUNDING_NOTE}}', grounded ? GROUNDED_NOTE : UNGROUNDED_NOTE)
+  const result = await generateWithFallback(key, { systemInstruction: withSkillContext(prompt_, skillContext) }, (model) => model.generateContent(prompt))
+  return result.response.text().trim()
+}
+
+const EQUIVALENT_EXERCISE_PROMPT = `Crei un esercizio NUOVO ed EQUIVALENTE a un esercizio d'esame dato, per una persona con ADHD che vuole esercitarsi oltre alla traccia originale.
+Regole, IMPORTANTI:
+{{GROUNDING_NOTE}}
+- L'esercizio nuovo deve: stesso concetto/competenza richiesta, difficoltà comparabile, struttura analoga -- MAI una copia o una banale riformulazione dell'originale (cambia i dati/il contesto/i numeri).
+- Genera anche la soluzione del nuovo esercizio, sotto un titolo "## Soluzione" separato -- così ci si può allenare prima di guardarla.
+- Formule matematiche in LaTeX vero ($...$ inline, $$...$$ isolata), mai a parole.
+- Testo semplice (nessun JSON), niente introduzioni tipo "Ecco l'esercizio".`
+
+export async function generateEquivalentExercise(exerciseTitle: string, exerciseText: string, studyContext: string | null, skillContext?: string): Promise<string> {
+  const key = getGeminiKey()
+  if (!key) throw new Error('missing_key')
+
+  const grounded = Boolean(studyContext?.trim())
+  const prompt = grounded
+    ? `Esercizio originale: ${exerciseTitle}\n\nTesto:\n${exerciseText.slice(0, 6000)}\n\nMateriale di studio reale collegato a questo argomento:\n${studyContext!.slice(0, 15000)}`
+    : `Esercizio originale: ${exerciseTitle}\n\nTesto:\n${exerciseText.slice(0, 6000)}`
+  const prompt_ = EQUIVALENT_EXERCISE_PROMPT.replace('{{GROUNDING_NOTE}}', grounded ? GROUNDED_NOTE : UNGROUNDED_NOTE)
+  const result = await generateWithFallback(key, { systemInstruction: withSkillContext(prompt_, skillContext) }, (model) => model.generateContent(prompt))
   return result.response.text().trim()
 }
 
