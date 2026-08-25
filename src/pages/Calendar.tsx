@@ -75,7 +75,11 @@ export default function CalendarPage() {
         const subjectColor = subjects.find((s) => s.id === t.subjectId)?.color ?? CALM_HEX
         return {
           id: TASK_ID_PREFIX + t.id,
-          title: t.title + (t.estimateMinutes ? ` · ${t.estimateMinutes} min` : ''),
+          // Real user request (2026-08-26): "devi coprirmi il numero di
+          // pagine nel giornaliero per capitolo/sezione" -- TaskItem.tsx
+          // already shows this per task in Oggi, Calendar's own chip never
+          // did.
+          title: t.title + (t.pageRange ? ` · p. ${t.pageRange.start}–${t.pageRange.end}` : '') + (t.estimateMinutes ? ` · ${t.estimateMinutes} min` : ''),
           start: t.dueDate,
           allDay: true,
           borderColor: 'transparent',

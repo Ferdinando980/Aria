@@ -701,7 +701,23 @@ export const useAppStore = create<AppState>()(
           // describes -- this is the same fix, applied to the one place
           // pruneDeleted itself doesn't reach.
           const planKeyStillValid = (planKey: string) => (planKey.startsWith('material:') ? materialIds.has(planKey.slice('material:'.length)) : subjectIds.has(planKey))
-          const studyPlans = Object.fromEntries(Object.entries(state.studyPlans).filter(([k]) => planKeyStillValid(k)))
+          // A WHOLE-SUBJECT plan survives the check above even when only ONE
+          // of the subject's materials disappears (the subject itself is
+          // still fine) -- real user report, same session: "il piano di
+          // TUTTA la materia è ancora lì, dentro ha ancora capitoli del PDF
+          // cancellato". The plan-level prune above can't catch this since
+          // it only looks at whether the KEY is still valid, not whether
+          // every ENTRY inside a still-valid plan still points somewhere
+          // real. Prune those individually too, against the chapters that
+          // actually survived this same pull (computed once, reused below
+          // for the real `chapters` field as well).
+          const survivingChapters = pruneDeleted(Array.from(byChapter.values()), new Set((data.chapters ?? []).map((r) => r.id)))
+          const survivingChapterIds = new Set(survivingChapters.map((c) => c.id))
+          const studyPlans = Object.fromEntries(
+            Object.entries(state.studyPlans)
+              .filter(([k]) => planKeyStillValid(k))
+              .map(([k, planChapters]) => [k, planChapters.filter((pc) => !pc.materialChapterId || survivingChapterIds.has(pc.materialChapterId))]),
+          )
           const studyPlanCallEvents = Object.fromEntries(Object.entries(state.studyPlanCallEvents).filter(([k]) => planKeyStillValid(k)))
 
           return {
@@ -717,7 +733,7 @@ export const useAppStore = create<AppState>()(
             archivedSkills: Array.from(byArchivedSkill.values()),
             skillEvents: Array.from(bySkillEvent.values()).slice(-SKILL_EVENTS_CAP),
             highlights: pruneDeleted(Array.from(byHighlight.values()), new Set((data.highlights ?? []).map((r) => r.id))),
-            chapters: pruneDeleted(Array.from(byChapter.values()), new Set((data.chapters ?? []).map((r) => r.id))),
+            chapters: survivingChapters,
             flashcards: pruneDeleted(Array.from(byFlashcard.values()), new Set((data.flashcards ?? []).map((r) => r.id))),
             summaries: pruneDeleted(Array.from(bySummary.values()), new Set((data.summaries ?? []).map((r) => r.id))),
             cheatStudySolutions: pruneDeleted(Array.from(byCheatStudySolution.values()), new Set((data.cheatStudySolutions ?? []).map((r) => r.id))),
@@ -774,6 +790,17 @@ export const useAppStore = create<AppState>()(
       removeSubject: (id) => {
         const subject = get().subjects.find((x) => x.id === id)
         const materialsUnderSubject = get().materials.filter((m) => m.subjectId === id)
+        // Real user instruction (2026-08-26, same session as the study-plan
+        // orphan bug above): "se viene eliminata la materia tutte le cose che
+        // rimangono collegate devono cancellarsi". studyPlans/
+        // studyPlanCallEvents are the one local-only data type removeSubject
+        // never touched -- everything else here is either hard-deleted
+        // (subject) or explicitly ARCHIVED, not orphaned (materials/skills,
+        // on purpose, see below). Reuses removeStudyPlan() itself (not a
+        // second implementation) so the real Tasks a plan created get
+        // cleaned up here too, exactly like the button-driven delete path.
+        get().removeStudyPlan(id)
+        for (const m of materialsUnderSubject) get().removeStudyPlan(`material:${m.id}`)
         const areaOfInterest = subject?.name
         const archivedMats = materialsUnderSubject.map((m) => ({ ...m, areaOfInterest }))
 
@@ -986,7 +1013,14 @@ export const useAppStore = create<AppState>()(
         set((s) => {
           const next = { ...s.studyPlans }
           delete next[planKey]
-          return { studyPlans: next }
+          // Found alongside the removeSubject cascade fix above (2026-08-26):
+          // this never cleared studyPlanCallEvents, so a regenerated plan's
+          // feedback/distillation could get attributed to a CALL event from
+          // a plan that no longer exists -- same orphan shape, smaller blast
+          // radius (a stale event id, not a whole visible ghost plan).
+          const nextCallEvents = { ...s.studyPlanCallEvents }
+          delete nextCallEvents[planKey]
+          return { studyPlans: next, studyPlanCallEvents: nextCallEvents }
         })
       },
       reassignOverdueStudyPlanItems: (planKey) => {
