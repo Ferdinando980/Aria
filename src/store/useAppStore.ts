@@ -681,7 +681,32 @@ export const useAppStore = create<AppState>()(
           // area_of_interest) since a hard delete can remove a row currently
           // sitting in either local array.
           const materialIds = new Set(data.materials.map((r) => r.id))
+          const subjectIds = new Set(data.subjects.map((r) => r.id))
+
+          // Real bug found live (2026-08-26, real user report: "il materiale
+          // è scomparso... ma il piano di studio c'è"): studyPlans/
+          // studyPlanCallEvents are local-only by design (never synced, see
+          // this file's own note on planKey -- content is regenerable, not
+          // critical data) and were never touched by pruneDeleted above.
+          // removeMaterial()'s own cascade cleans up a plan when the app's
+          // OWN delete button is used, but nothing cleaned it up when a
+          // material vanished through a DIFFERENT path (a direct DB delete
+          // this same session, or any cross-device hard delete) -- the pull
+          // above correctly drops the material from `materials`, but the
+          // plan keyed off its id (planKey `material:${id}`) or its whole
+          // subject (bare `subjectId` planKey) just sat there forever,
+          // pointing at nothing. Same "orphan survives because nothing
+          // prunes local-only data against a remote deletion" shape as the
+          // ghost-row bug this file's pruneDeleted comment already
+          // describes -- this is the same fix, applied to the one place
+          // pruneDeleted itself doesn't reach.
+          const planKeyStillValid = (planKey: string) => (planKey.startsWith('material:') ? materialIds.has(planKey.slice('material:'.length)) : subjectIds.has(planKey))
+          const studyPlans = Object.fromEntries(Object.entries(state.studyPlans).filter(([k]) => planKeyStillValid(k)))
+          const studyPlanCallEvents = Object.fromEntries(Object.entries(state.studyPlanCallEvents).filter(([k]) => planKeyStillValid(k)))
+
           return {
+            studyPlans,
+            studyPlanCallEvents,
             subjects: pruneDeleted(Array.from(bySub.values()), new Set(data.subjects.map((r) => r.id))),
             materials: pruneDeleted(Array.from(byMat.values()), materialIds),
             archivedMaterials: pruneDeleted(Array.from(byArchivedMat.values()), materialIds),
