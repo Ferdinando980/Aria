@@ -161,6 +161,24 @@ export function tagsFromText(...texts: (string | undefined)[]): string[] {
   return unique.slice(0, 8)
 }
 
+// Real bug found live (2026-08-25): StudyPlanPanel/MaterialPlanPanel called
+// routeSkills('study_plan', tagsFromText(subject.name)) -- tags describing
+// WHICH SUBJECT, never WHICH TECHNIQUE. seed_study_plan_chapter_density's
+// tags ('piano','capitolo','studio','materiale') describe the task-shape
+// (chapter-by-chapter density pacing), not any subject's vocabulary -- the
+// two never overlap by construction, so retrieval returned empty on every
+// real call (confirmed: 25/25 study_plan CALLs, skillIds always []).
+// task_breakdown never had this problem: its fixed UI prefix ("Aiutami a
+// spezzare in piccoli passi questo compito:") already IS task-shape text
+// that happens to share real words with seed_task_breakdown_first_step's
+// tags. study_plan has no such prefix (it's an automatic generation, not a
+// typed message) -- these are its equivalent: study_plan generation is
+// ALWAYS "make a chapter-by-chapter plan sized by density," for every
+// subject, every time, so these describe the invariant part of the task
+// the same way that prefix does, alongside tagsFromText(subject.name) for
+// the subject-specific part.
+export const STUDY_PLAN_TASK_TAGS = ['piano', 'capitolo', 'studio', 'materiale']
+
 // ---- seed skills: authored, VERIFIED, generationMethod 'manual' --------
 // A few, deliberately not many — Aria's system prompts (gemini.ts) already
 // carry most generic ADHD-coaching guidance. These seed the domains where

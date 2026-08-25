@@ -6,7 +6,7 @@ import { useToastStore } from '../../store/toastStore'
 import { generateStudyPlan, reflectOnStudyPlan, hasGeminiKey, GEMINI_MODEL } from '../../lib/gemini'
 import { buildStudyPlanChapterInputs, isViewableInline } from '../../lib/materialContent'
 import { uid, cn, daysUntilNextExam, nextExamEvent, distributeByWeight, chapterPageRange } from '../../lib/utils'
-import { routeSkills, skillsAsPromptContext, tagsFromText } from '../../lib/skills'
+import { routeSkills, skillsAsPromptContext, tagsFromText, STUDY_PLAN_TASK_TAGS } from '../../lib/skills'
 import { enforceSkillBudget } from '../../lib/contextBudget'
 import { MarkdownLite } from '../shared/MarkdownLite'
 import type { Material } from '../../lib/types'
@@ -120,7 +120,7 @@ export function MaterialPlanPanel({ material, onClose }: { material: Material; o
       let skillContext = ''
       let callEvent
       if (librarianEnabled) {
-        const retrieved = routeSkills(skills, 'study_plan', [`material:${material.id}`, ...tagsFromText(material.title)], 2, 1, skillEvents)
+        const retrieved = routeSkills(skills, 'study_plan', [`material:${material.id}`, ...tagsFromText(material.title), ...STUDY_PLAN_TASK_TAGS], 2, 1, skillEvents)
         const baseText = chapterInputs.map((c) => c.text).join('\n') + '\n' + playbook + '\n' + existing.map((c) => c.summary).join('\n')
         const budgeted = enforceSkillBudget(baseText, retrieved, GEMINI_MODEL)
         if (budgeted.baseOverBudget || budgeted.droppedSkillIds.length > 0) {
