@@ -120,9 +120,16 @@ function datedColumnsWithoutCompanion(body, tableName, alteredSet) {
 
 function alteredColumns(text) {
   const set = new Set()
-  const re = /alter\s+table\s+(\w+)\s+add\s+column\s+if\s+not\s+exists\s+"?(\w+)"?/gi
+  // Both forms count as "the drift is covered": ADD COLUMN for a genuinely
+  // new column, ALTER COLUMN ... TYPE for an existing one whose type
+  // changed later (skills.id/derived_from's uuid -> text fix is this shape
+  // -- see migration_2026-08-24c.sql -- and was a false positive here until
+  // this regex learned to recognize it too).
+  const addRe = /alter\s+table\s+(\w+)\s+add\s+column\s+if\s+not\s+exists\s+"?(\w+)"?/gi
+  const typeRe = /alter\s+table\s+(\w+)\s+alter\s+column\s+"?(\w+)"?\s+type\b/gi
   let m
-  while ((m = re.exec(text))) set.add(`${m[1]}.${m[2]}`)
+  while ((m = addRe.exec(text))) set.add(`${m[1]}.${m[2]}`)
+  while ((m = typeRe.exec(text))) set.add(`${m[1]}.${m[2]}`)
   return set
 }
 

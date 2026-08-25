@@ -150,6 +150,12 @@ create table if not exists skills (
 );
 alter table skills add column if not exists material_id uuid references materials(id) on delete set null;
 alter table skills add column if not exists area_of_interest text;
+-- schema_drift_check.mjs companions for the type change above (2026-08-24c,
+-- verified already applied on the real DB -- see migration_2026-08-24c.sql):
+-- these are no-ops there, but without them a brand-new project created
+-- fresh from this file alone would get id/derived_from as uuid, not text.
+alter table skills alter column id type text;
+alter table skills alter column derived_from type text;
 
 create table if not exists skill_events (
   id uuid primary key,
@@ -168,6 +174,7 @@ create table if not exists skill_events (
   -- the same confound that hit the Python research's first real run.
   model text
 );
+alter table skill_events add column if not exists model text;
 
 -- Evidenziazioni PDF ("collegamenti", 2026-08-20) -- vedi src/lib/pdfHighlights.ts,
 -- components/materials/PdfViewer.tsx. `rects` è la selezione reale catturata al
