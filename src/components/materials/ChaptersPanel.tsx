@@ -123,7 +123,7 @@ export function ChaptersPanel({
       // Falling back to getMaterialFileBlob directly (not
       // getMaterialFileUrl+fetch) so this path is cache-aware too instead
       // of re-downloading from Storage on its own.
-      const buf = fileUrl ? await (await fetch(fileUrl)).arrayBuffer() : await (await getMaterialFileBlob(material.filePath!))?.arrayBuffer()
+      const buf = fileUrl ? await (await fetch(fileUrl)).arrayBuffer() : await (await getMaterialFileBlob(material.filePath!, material.fileUpdatedAt))?.arrayBuffer()
       if (!buf) throw new Error('no_file')
       const { pages, truncated, totalPages } = await extractPdfTextByPage(buf, CHAPTER_DETECTION_OPTS)
       const { skillContext, callEvent } = prepareChaptersCall()
@@ -159,7 +159,7 @@ export function ChaptersPanel({
       // Falling back to getMaterialFileBlob directly (not
       // getMaterialFileUrl+fetch) so this path is cache-aware too instead
       // of re-downloading from Storage on its own.
-      const buf = fileUrl ? await (await fetch(fileUrl)).arrayBuffer() : await (await getMaterialFileBlob(material.filePath!))?.arrayBuffer()
+      const buf = fileUrl ? await (await fetch(fileUrl)).arrayBuffer() : await (await getMaterialFileBlob(material.filePath!, material.fileUpdatedAt))?.arrayBuffer()
       if (!buf) throw new Error('no_file')
       const { pages, truncated, totalPages } = await extractPdfTextByPage(buf, { ...CHAPTER_DETECTION_OPTS, fromPage: remaining.fromPage })
       if (pages.length === 0) {

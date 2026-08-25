@@ -1,6 +1,7 @@
 import { useAppStore } from '../store/useAppStore'
 import { useToastStore } from '../store/toastStore'
 import { canUseCloudStorage, uploadMaterialFile } from './storage'
+import { nowIso } from './utils'
 
 const LOCAL_MAX_BYTES = 3 * 1024 * 1024 // 3MB cap only applies to the offline/local-only fallback
 
@@ -26,7 +27,7 @@ export function useAddFileMaterial() {
       const material = addMaterial({ subjectId, type: 'file', title, fileName: file.name })
       const path = await uploadMaterialFile(currentUserId, material.id, file)
       if (path) {
-        updateMaterial(material.id, { filePath: path })
+        updateMaterial(material.id, { filePath: path, fileUpdatedAt: nowIso() })
       } else {
         push({ title: 'Caricamento non riuscito', description: file.name, tone: 'warn' })
       }

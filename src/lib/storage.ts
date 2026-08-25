@@ -55,26 +55,35 @@ export async function getMaterialFileUrl(path: string): Promise<string | null> {
 // racing two.
 const inFlightFetches = new Map<string, Promise<Blob | null>>()
 
-async function fetchAndCacheMaterialFileBlob(path: string): Promise<Blob | null> {
+async function fetchAndCacheMaterialFileBlob(path: string, fileUpdatedAt?: string): Promise<Blob | null> {
   const url = await getMaterialFileUrl(path)
   if (!url) return null
   try {
     const res = await fetch(url)
     if (!res.ok) return null
     const blob = await res.blob()
-    setCachedMaterialBlob(path, blob) // fire-and-forget -- never block the caller on a cache write
+    setCachedMaterialBlob(path, blob, fileUpdatedAt) // fire-and-forget -- never block the caller on a cache write
     return blob
   } catch {
     return null
   }
 }
 
-export async function getMaterialFileBlob(path: string): Promise<Blob | null> {
-  const cached = await getCachedMaterialBlob(path)
+/** `fileUpdatedAt` (2026-08-25, optional): the material's CURRENT
+ * fileUpdatedAt, already sitting in the Zustand store from the regular
+ * Supabase sync pull -- pass it so a cache entry from BEFORE another
+ * device really replaced this file is treated as stale instead of served
+ * forever. Reads it from state already local; never triggers a network
+ * call just to check, so offline behaves the same as before this existed:
+ * no fresher signal available -> the cache (if any) is trusted. Omit it
+ * for a caller that doesn't have a Material handy (falls back to the old
+ * unconditional-trust behavior). */
+export async function getMaterialFileBlob(path: string, fileUpdatedAt?: string): Promise<Blob | null> {
+  const cached = await getCachedMaterialBlob(path, fileUpdatedAt)
   if (cached) return cached
   const inFlight = inFlightFetches.get(path)
   if (inFlight) return inFlight
-  const promise = fetchAndCacheMaterialFileBlob(path).finally(() => inFlightFetches.delete(path))
+  const promise = fetchAndCacheMaterialFileBlob(path, fileUpdatedAt).finally(() => inFlightFetches.delete(path))
   inFlightFetches.set(path, promise)
   return promise
 }

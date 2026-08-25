@@ -19,7 +19,7 @@ async function fetchArrayBuffer(url: string): Promise<ArrayBuffer> {
 async function resolveMaterialArrayBuffer(material: Material): Promise<ArrayBuffer | null> {
   if (material.fileDataUrl) return fetchArrayBuffer(material.fileDataUrl)
   if (material.filePath) {
-    const blob = await getMaterialFileBlob(material.filePath)
+    const blob = await getMaterialFileBlob(material.filePath, material.fileUpdatedAt)
     return blob ? blob.arrayBuffer() : null
   }
   return null

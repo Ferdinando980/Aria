@@ -116,7 +116,7 @@ export function MaterialViewer({
         // MaterialViewer is what "opening a material" actually mounts).
         // A local blob: URL, not the remote signed URL, so pdf.js/download
         // never touch the network on a cache hit either.
-        blob = await getMaterialFileBlob(material.filePath)
+        blob = await getMaterialFileBlob(material.filePath, material.fileUpdatedAt)
         if (blob) {
           objectUrl = URL.createObjectURL(blob)
           url = objectUrl

@@ -99,6 +99,7 @@ export async function syncPushAll(
       file_name: m.fileName,
       file_data_url: m.fileDataUrl,
       file_path: m.filePath,
+      file_updated_at: m.fileUpdatedAt,
       ai_notes: m.aiNotes,
       annotation_data_url: m.annotations ? JSON.stringify(m.annotations) : null,
       area_of_interest: m.areaOfInterest,

@@ -31,6 +31,16 @@ interface CacheEntry {
   blob: Blob
   size: number
   cachedAt: number
+  /** Material.fileUpdatedAt at the moment this blob was cached (2026-08-25)
+   * -- see types.ts's comment on that field for why it's a separate signal
+   * from a generic `updated_at`. Compared against the material's CURRENT
+   * fileUpdatedAt (already in the Zustand store from the regular sync pull,
+   * no extra network call) before trusting a cache hit -- this is what
+   * lets a second device learn its cached copy is stale after the first
+   * device really replaces the file, instead of serving it forever.
+   * Undefined means "no signal was available when cached" (e.g. offline
+   * first upload) -- treated as trusted rather than perpetually stale. */
+  fileUpdatedAt?: string
 }
 
 let dbPromise: Promise<IDBDatabase> | null = null
@@ -61,10 +71,19 @@ async function withStore<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore
   })
 }
 
-export async function getCachedMaterialBlob(path: string): Promise<Blob | null> {
+/** `expectedFileUpdatedAt` (2026-08-25): the caller's current, already-local
+ * Material.fileUpdatedAt -- pass it to get a real staleness check across
+ * devices (see CacheEntry's comment); omit it (or pass undefined) to trust
+ * whatever is cached unconditionally, the old behavior, for callers that
+ * don't have that signal handy. A cached entry with no fileUpdatedAt of its
+ * own (nothing to compare against) is always trusted -- fails open toward
+ * "serve the cache" the same way every other layer of this cache does. */
+export async function getCachedMaterialBlob(path: string, expectedFileUpdatedAt?: string): Promise<Blob | null> {
   try {
     const entry = await withStore<CacheEntry | undefined>('readonly', (s) => s.get(path))
-    return entry?.blob ?? null
+    if (!entry) return null
+    if (expectedFileUpdatedAt && entry.fileUpdatedAt && entry.fileUpdatedAt !== expectedFileUpdatedAt) return null
+    return entry.blob
   } catch {
     // Cache is a pure optimization -- any failure (quota, private mode,
     // browser without IndexedDB) just means "no cache hit", never a broken
@@ -88,10 +107,10 @@ async function evictOldestUntilUnderCap(incomingSize: number): Promise<void> {
   }
 }
 
-export async function setCachedMaterialBlob(path: string, blob: Blob): Promise<void> {
+export async function setCachedMaterialBlob(path: string, blob: Blob, fileUpdatedAt?: string): Promise<void> {
   try {
     await evictOldestUntilUnderCap(blob.size)
-    await withStore('readwrite', (s) => s.put({ path, blob, size: blob.size, cachedAt: Date.now() } satisfies CacheEntry))
+    await withStore('readwrite', (s) => s.put({ path, blob, size: blob.size, cachedAt: Date.now(), fileUpdatedAt } satisfies CacheEntry))
   } catch {
     // Same fail-open reasoning as getCachedMaterialBlob -- a cache write
     // failure (quota exceeded, etc.) must never block showing the file the

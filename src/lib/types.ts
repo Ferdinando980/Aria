@@ -22,6 +22,16 @@ export interface Material {
   fileDataUrl?: string
   /** Path inside the Supabase Storage "materials" bucket, when the file was uploaded to the cloud. */
   filePath?: string
+  /** Bumped ONLY when the actual file bytes change (useAddFileMaterial's
+   * initial upload, useReplaceMaterialFile's real replace) -- 2026-08-25,
+   * a deliberately separate field from a generic `updatedAt` (this Material
+   * type doesn't even have one), specifically so materialFileCache.ts's
+   * staleness check has a signal that means "the file changed," not
+   * "something in this record changed." updateMaterial() is also the same
+   * function a rename/note-edit/annotation-save goes through -- a shared
+   * generic timestamp would make renaming a material invalidate its cached
+   * PDF blob exactly as if the file itself had been replaced. */
+  fileUpdatedAt?: string
   /** Aria's accumulated notes about this specific material — grows across chat sessions, unique per file. */
   aiNotes?: string
   /** Freehand whiteboard sketch, per PDF page (page number -> PNG data URL) so a

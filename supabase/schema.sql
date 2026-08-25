@@ -23,11 +23,17 @@ create table if not exists materials (
   file_name text,
   file_data_url text,
   file_path text,
+  -- Bumped ONLY when the actual file bytes change (2026-08-25), never on a
+  -- rename/note-edit/annotation-save -- see materialFileCache.ts and
+  -- types.ts's Material.fileUpdatedAt comment for why this has to be a
+  -- separate column from the generic `updated_at` below.
+  file_updated_at timestamptz,
   ai_notes text,
   annotation_data_url text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+alter table materials add column if not exists file_updated_at timestamptz;
 
 create table if not exists tasks (
   id uuid primary key,
@@ -126,9 +132,24 @@ create table if not exists skills (
   successes int not null default 0,
   generation_method text not null default 'manual' check (generation_method in ('manual', 'distilled')),
   derived_from text,
+  -- Referenced and synced by the app (useAppStore.ts, 5+ call sites) since
+  -- material_knowledge existed (2026-08-21) but NEVER actually added here --
+  -- found live 2026-08-25 when a real cleanup query hit "column material_id
+  -- does not exist". Same bug class as events.type/skills.domain+status/
+  -- profiles.research_consent, worse in effect: syncUpsert's fail-open meant
+  -- every skill carrying either field silently never round-tripped to
+  -- Supabase at all, not just this one column -- material_knowledge skills
+  -- likely never synced across devices this whole time. `on delete set
+  -- null`, not cascade -- removeMaterial() already ARCHIVES (not deletes)
+  -- the matching skills in application code; a DB-level cascade would race
+  -- that and could destroy a skill's content before the archive logic runs.
+  material_id uuid references materials(id) on delete set null,
+  area_of_interest text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+alter table skills add column if not exists material_id uuid references materials(id) on delete set null;
+alter table skills add column if not exists area_of_interest text;
 
 create table if not exists skill_events (
   id uuid primary key,
