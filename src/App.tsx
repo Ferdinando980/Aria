@@ -2,6 +2,7 @@ import { useEffect, Suspense, lazy } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { Layout } from './components/layout/Layout'
 import { AuthGate } from './components/layout/AuthGate'
+import { Toaster } from './components/ui/Toaster'
 import Today from './pages/Today'
 import Settings from './pages/Settings'
 import { useAuthStore } from './store/authStore'
@@ -171,6 +172,16 @@ export default function App() {
   return (
     <BrowserRouter>
       <SyncBootstrap />
+      {/* Real bug found live (2026-08-25): Toaster used to live only inside
+          Layout, which mounts only AFTER AuthGate lets someone through to
+          the app routes -- so every toast pushed from AuthGate's own screens
+          (wrong password, "password impostata" after a successful recovery,
+          a failed update) had nowhere to render and silently vanished. A
+          real successful password reset looked exactly like "click Salva,
+          nothing happens" because of this, not because it failed. Rendered
+          here instead, above AuthGate, so it's mounted regardless of auth
+          state. */}
+      <Toaster />
       <AuthGate>
         <Suspense fallback={null}>
           <Routes>

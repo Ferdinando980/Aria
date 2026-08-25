@@ -5,6 +5,8 @@ import { Button } from '../ui/Button'
 import { Link } from 'react-router-dom'
 import { askAboutMaterial, hasGeminiKey, updateMaterialMemory, GEMINI_MODEL } from '../../lib/gemini'
 import { getMaterialText } from '../../lib/materialContent'
+import { verifyUncertaintyDisclosure } from '../../lib/uncertaintyDisclosureCheck'
+import { verifyEvidenceGrounding } from '../../lib/evidenceGroundingCheck'
 import { useAppStore } from '../../store/useAppStore'
 import { cn } from '../../lib/utils'
 import type { Material, SkillEvent } from '../../lib/types'
@@ -37,6 +39,9 @@ export function MaterialAskPanel({
   const [loading, setLoading] = useState(false)
   const [context, setContext] = useState('')
   const [readingFile, setReadingFile] = useState(false)
+  // fs_uncertainty_disclosure_check pilot (2026-08-25): known independently of
+  // the model, at the moment getMaterialText() resolves -- see uncertaintyDisclosureCheck.ts.
+  const [contentAvailable, setContentAvailable] = useState(true)
   const scrollRef = useRef<HTMLDivElement>(null)
   const skills = useAppStore((s) => s.skills)
   const librarianEnabled = useAppStore((s) => s.librarianEnabled)
@@ -76,6 +81,7 @@ export function MaterialAskPanel({
           ? `\nLink: ${material.url} (non riesco ad aprire link esterni, chiedi all'utente di incollarti il testo se serve)`
           : `\nNon riesco a leggere il contenuto di questo file (formato non supportato ancora): ${material.fileName ?? ''}`
       setContext(header + memory + body)
+      setContentAvailable(Boolean(text))
       setReadingFile(false)
     })
     return () => {
@@ -123,6 +129,8 @@ export function MaterialAskPanel({
       }
 
       const reply = await askAboutMaterial(context, next, skillContext)
+      console.log('[fs_uncertainty_disclosure_check]', verifyUncertaintyDisclosure(reply, contentAvailable))
+      if (contentAvailable) console.log('[fs_cite_before_claim]', verifyEvidenceGrounding(reply, context))
       setMessages((m) => [...m, { role: 'model', text: reply, callEvent: callEvents }])
       // Fire-and-forget: distill anything new from this exchange into the material's persistent memory
       // (now a Skill in the library, not the old standalone aiNotes field — see types.ts), so the next

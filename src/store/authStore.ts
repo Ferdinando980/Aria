@@ -17,14 +17,19 @@ import { supabase, isSupabaseConfigured, setRememberMe } from '../lib/supabase'
 // initialization can race it. This can never be late -- it's parsed from
 // the exact same URL the browser already has, not from an event that has
 // to survive a round trip through the client's internal init first.
-function parseAuthUrlSignal(): { recovery: boolean; error: string | null } {
-  if (typeof window === 'undefined') return { recovery: false, error: null }
+function parseAuthUrlSignal() {
+  if (typeof window === 'undefined') return { recovery: false, error: null as string | null, accessToken: null as string | null, refreshToken: null as string | null }
   const raw = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash
   const hashParams = new URLSearchParams(raw)
   const queryParams = new URLSearchParams(window.location.search)
   const type = hashParams.get('type') ?? queryParams.get('type')
   const errorDescription = hashParams.get('error_description') ?? queryParams.get('error_description')
-  return { recovery: type === 'recovery', error: errorDescription ? decodeURIComponent(errorDescription.replace(/\+/g, ' ')) : null }
+  return {
+    recovery: type === 'recovery',
+    error: errorDescription ? decodeURIComponent(errorDescription.replace(/\+/g, ' ')) : null,
+    accessToken: hashParams.get('access_token') ?? queryParams.get('access_token'),
+    refreshToken: hashParams.get('refresh_token') ?? queryParams.get('refresh_token'),
+  }
 }
 const initialAuthUrlSignal = parseAuthUrlSignal()
 
@@ -62,12 +67,42 @@ export const useAuthStore = create<AuthState>((set) => ({
   recoveryError: initialAuthUrlSignal.error,
   init: () => {
     if (!supabase) return
-    supabase.auth.getSession().then(({ data }) => {
+    const client = supabase
+    client.auth.getSession().then(({ data }) => {
       set({ session: data.session, ready: true })
     })
-    supabase.auth.onAuthStateChange((event, session) => {
+    client.auth.onAuthStateChange((event, session) => {
       set((state) => ({ session, recovery: state.recovery || event === 'PASSWORD_RECOVERY' }))
     })
+    // Installed PWAs commonly reuse an already-open window for a same-origin
+    // link instead of loading a fresh document (real report: clicking the
+    // recovery email "opened the tab" but landed on the account already
+    // logged in there) -- when that happens the URL's hash changes but no
+    // module ever re-evaluates, so supabase-js's own _initialize() (which
+    // only runs once, at client construction) never sees the new tokens --
+    // the tab just keeps whatever session it already had. Flipping the
+    // `recovery` UI flag alone would be actively WRONG here: it would show
+    // "set new password" while still authenticated as the OLD account, so
+    // saving would silently change the wrong person's password. Instead,
+    // explicitly exchange the new hash's own access/refresh tokens for a
+    // session via setSession() -- the same thing _initialize() would have
+    // done on a fresh load -- so `recovery` only ever turns on together with
+    // the session it actually belongs to.
+    const recheckUrl = () => {
+      const signal = parseAuthUrlSignal()
+      if (signal.accessToken && signal.refreshToken) {
+        client.auth.setSession({ access_token: signal.accessToken, refresh_token: signal.refreshToken }).then(({ data, error }) => {
+          if (!error) {
+            set({ session: data.session, recovery: true })
+            history.replaceState(null, '', window.location.pathname + window.location.search)
+          }
+        })
+      } else if (signal.error) {
+        set((state) => ({ recoveryError: state.recoveryError ?? signal.error }))
+      }
+    }
+    window.addEventListener('focus', recheckUrl)
+    document.addEventListener('visibilitychange', recheckUrl)
   },
   signIn: async (email, password, remember) => {
     if (!supabase) return

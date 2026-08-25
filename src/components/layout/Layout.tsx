@@ -3,7 +3,6 @@ import { Flame } from 'lucide-react'
 import { Sidebar } from './Sidebar'
 import { BottomNav } from './BottomNav'
 import { QuickAdd } from './QuickAdd'
-import { Toaster } from '../ui/Toaster'
 import { useAppStore } from '../../store/useAppStore'
 import { cn } from '../../lib/utils'
 
@@ -43,7 +42,6 @@ export function Layout() {
 
       <QuickAdd />
       <BottomNav />
-      <Toaster />
     </div>
   )
 }

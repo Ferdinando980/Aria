@@ -13,6 +13,7 @@ import { cn } from '../lib/utils'
 import type { ChatMessage } from '../lib/types'
 import { routeSkills, skillsAsPromptContext, tagsFromText, maybeDistillFromExchanges } from '../lib/skills'
 import { enforceSkillBudget } from '../lib/contextBudget'
+import { verifyTaskDecomposition } from '../lib/taskDecompositionVerification'
 import { useToastStore } from '../store/toastStore'
 
 const BREAKDOWN_PREFIX = 'Aiutami a spezzare in piccoli passi questo compito:'
@@ -111,6 +112,12 @@ export default function Assistant() {
         callEvent = logSkillCall(domain, 'B', [], GEMINI_MODEL)
       }
       const reply = await askAria(history.map((m) => ({ role: m.role, text: m.text })), attachment, skillContext)
+      // fs_task_decomposition_structure_check pilot (2026-08-25): soft, log-only --
+      // heuristic on free chat text, weaker than fs_self_verification_recompute's
+      // exact arithmetic, never blocks the reply. See FOUNDATION_SKILLS_LOG.md.
+      if (domain === 'task_breakdown') {
+        console.log('[fs_task_decomposition_structure_check]', verifyTaskDecomposition(reply))
+      }
       addChatMessage({ role: 'model', text: reply, skillEventRef: callEvent.id, skillDomain: domain })
     } catch (err) {
       console.error('[Assistant] askAria failed', err)

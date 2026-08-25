@@ -6,6 +6,8 @@ import { Input } from '../ui/Input'
 import { useAppStore } from '../../store/useAppStore'
 import { useToastStore } from '../../store/toastStore'
 import { generateChapters, hasGeminiKey, GEMINI_MODEL } from '../../lib/gemini'
+import { verifyChapterCoverage } from '../../lib/chapterVerification'
+import { verifyNoContradiction } from '../../lib/chapterContinuationCheck'
 import { extractPdfTextByPage, CHAPTER_DETECTION_OPTS } from '../../lib/materialContent'
 import { getMaterialFileBlob } from '../../lib/storage'
 import { uid } from '../../lib/utils'
@@ -134,10 +136,18 @@ export function ChaptersPanel({
       }
       setMaterialChapters(material.id, toStoredChapters(suggested))
       setLastCallEvent(callEvent)
+      // fs_self_verification_recompute pilot (2026-08-25): verify the declared
+      // ranges against the REAL page span just sent to the model (pages[last].page,
+      // independent arithmetic -- not the model's own claim) -- see chapterVerification.ts.
+      const coveredSpan = pages[pages.length - 1]?.page ?? 0
+      const verification = verifyChapterCoverage(suggested, coveredSpan)
+      console.log('[fs_self_verification_recompute:chapters]', verification)
       if (truncated) {
         const lastCovered = pages[pages.length - 1]?.page ?? 0
         setRemaining({ fromPage: lastCovered + 1, totalPages })
         push({ title: regenerate ? 'Capitoli rigenerati' : 'Capitoli rilevati', description: `Documento molto lungo: coperte le pagine 1-${lastCovered} di ${totalPages}, il resto con "Continua".`, tone: 'good' })
+      } else if (!verification.pass) {
+        push({ title: regenerate ? 'Capitoli rigenerati' : 'Capitoli rilevati', description: `Verifica automatica: ${verification.reason}. Controlla i confini prima di usarli.`, tone: 'warn' })
       } else {
         push({ title: regenerate ? 'Capitoli rigenerati' : 'Capitoli rilevati', tone: 'good' })
       }
@@ -179,6 +189,9 @@ export function ChaptersPanel({
         setRemaining(null)
         return
       }
+      // fs_contradiction_check pilot (2026-08-25): the model was just told
+      // lastEndPage as a fact (see the prompt above) -- check it didn't ignore it.
+      if (lastExisting) console.log('[fs_contradiction_check]', verifyNoContradiction(suggested, lastExisting.endPage))
       // Append, don't replace: setMaterialChapters takes the FULL desired
       // list (it upserts existing ids by position) -- the already-saved
       // chapters from earlier passes have to be included or they'd be lost.

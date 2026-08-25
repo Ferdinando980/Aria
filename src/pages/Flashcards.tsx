@@ -6,6 +6,7 @@ import { SidePanel } from '../components/ui/SidePanel'
 import { useAppStore } from '../store/useAppStore'
 import { useToastStore } from '../store/toastStore'
 import { generateFlashcards, hasGeminiKey, GEMINI_MODEL } from '../lib/gemini'
+import { checkForDuplicateFlashcards, frontsToAvoidForRetry, mergeCorrectedBatch } from '../lib/flashcardDuplicateCheck'
 import { isViewableInline, getChapterScopedText } from '../lib/materialContent'
 import { cn, contrastTextColor } from '../lib/utils'
 import type { SkillEvent } from '../lib/types'
@@ -264,9 +265,34 @@ export default function Flashcards() {
         chapterId: chapter.id,
         sectionId: section?.id,
       })
-      const cards = await generateFlashcards(material.title, scopeLabel, text, existingFronts, skillContext)
-      if (cards.length === 0) {
+      const generated = await generateFlashcards(material.title, scopeLabel, text, existingFronts, skillContext)
+      if (generated.length === 0) {
         push({ title: mode === 'more' ? 'Nessun concetto nuovo trovato' : 'Non sono riuscita a creare flashcard da qui', tone: 'warn' })
+        return
+      }
+      // fs_error_detection_duplicate_check pilot (2026-08-25): independent check
+      // that the model actually followed FLASHCARDS_PROMPT's "non ripetere"
+      // instruction -- safe to act on (a real duplicate is redundant by
+      // definition), unlike task_decomposition's log-only heuristic. See
+      // FOUNDATION_SKILLS_LOG.md.
+      const dupCheck = checkForDuplicateFlashcards(generated, existingFronts)
+      console.log('[fs_error_detection_duplicate_check]', { dropped: dupCheck.dropped.length, kept: dupCheck.keep.length })
+      let cards = dupCheck.keep
+      // fs_targeted_error_correction pilot (2026-08-25): one targeted retry for
+      // exactly the dropped slots, not a full redo -- see flashcardDuplicateCheck.ts.
+      if (dupCheck.dropped.length > 0) {
+        const avoid = frontsToAvoidForRetry(existingFronts, dupCheck.keep)
+        try {
+          const retry = await generateFlashcards(material.title, scopeLabel, text, avoid, skillContext)
+          const correction = mergeCorrectedBatch(retry, avoid, dupCheck.dropped.length)
+          console.log('[fs_targeted_error_correction]', { requested: dupCheck.dropped.length, accepted: correction.accepted.length, stillDuplicate: correction.stillDuplicate })
+          cards = [...cards, ...correction.accepted]
+        } catch (err) {
+          console.warn('[fs_targeted_error_correction] retry failed, keeping original batch', err)
+        }
+      }
+      if (cards.length === 0) {
+        push({ title: 'Solo duplicati trovati', description: 'Il modello ha ripetuto concetti gia\' presenti -- riprova o cambia ambito.', tone: 'warn' })
         return
       }
       if (mode === 'replace') removeFlashcardsFor(material.id, chapter.id, section?.id)
@@ -276,7 +302,12 @@ export default function Flashcards() {
       setRevealed(false)
       setView('study')
       setShowNewDeckPicker(false)
-      push({ title: `${cards.length} flashcard ${mode === 'more' ? 'aggiunte' : 'create'}`, tone: 'good' })
+      const netDropped = dupCheck.dropped.length - (cards.length - dupCheck.keep.length)
+      push({
+        title: `${cards.length} flashcard ${mode === 'more' ? 'aggiunte' : 'create'}`,
+        description: netDropped > 0 ? `${netDropped} scartate perche\' duplicate (dopo un tentativo di sostituzione).` : undefined,
+        tone: 'good',
+      })
     } catch {
       push({ title: 'Generazione non riuscita', description: 'Riprova tra poco.', tone: 'warn' })
     } finally {
