@@ -260,6 +260,37 @@ function parseAnnotations(raw: string | null | undefined): Record<number, string
   }
 }
 
+// Real bug found live (2026-08-25): hydrateFromRemote's per-id merge (seed
+// from local state, add/update whatever the pull returned) never REMOVED a
+// local row whose id was missing from a fresh pull -- so a device that had
+// something cached before it was hard-deleted (removeMaterial/removeSubject/
+// removeTask/removeEvent/removeFlashcard/etc., all real syncDelete calls)
+// kept showing a ghost forever, pointing at data that no longer exists
+// anywhere. Traced from a real 404: a material's Storage file was deleted
+// (confirmed via Supabase's own [Lifecycle] logs) but its local row in THIS
+// session survived across multiple reloads.
+//
+// syncPullAll's queries have no LIMIT/pagination (confirmed against the
+// real ones this session) -- a pull is a complete snapshot of the user's
+// rows, so an id genuinely absent from it really was deleted server-side,
+// with one exception: something created THIS device, THIS session, whose
+// own syncUpsert/syncDelete push hasn't resolved yet when a pull happens to
+// land in between (e.g. a session-token refresh re-running syncUp() while a
+// create is still in flight). RECENT_GRACE_MS is the guard against that --
+// anything created more recently than this is kept regardless of whether
+// the pull saw it yet, at the cost of a genuinely-just-deleted item
+// surviving one extra grace window on this one device before the next pull
+// catches up. Only applied to entities with a real hard-delete path
+// (grep-confirmed: subjects/materials/tasks/events/flashcards/summaries/
+// material_chapters/material_highlights/text_edits) -- skills and
+// skillEvents are never syncDelete'd (archive-only / append-only), so their
+// existing pure-merge behavior already has no ghost risk to fix.
+const RECENT_GRACE_MS = 5 * 60 * 1000
+function pruneDeleted<T extends { id: string; createdAt: string }>(local: T[], remoteIds: Set<string>): T[] {
+  const now = Date.now()
+  return local.filter((item) => remoteIds.has(item.id) || now - new Date(item.createdAt).getTime() < RECENT_GRACE_MS)
+}
+
 // planKey is either a bare subjectId (whole-subject plan) or `material:{id}`
 // (single-file plan) -- see MaterialPlanPanel/StudyPlanPanel's own comments
 // on this convention.
@@ -601,21 +632,27 @@ export const useAppStore = create<AppState>()(
             })
           }
 
+          // pruneDeleted (2026-08-25, see its own comment above) -- only for
+          // entities with a real hard-delete path. `materials`' remote id
+          // set covers BOTH live and archived rows (same table, split by
+          // area_of_interest) since a hard delete can remove a row currently
+          // sitting in either local array.
+          const materialIds = new Set(data.materials.map((r) => r.id))
           return {
-            subjects: Array.from(bySub.values()),
-            materials: Array.from(byMat.values()),
-            archivedMaterials: Array.from(byArchivedMat.values()),
-            tasks: Array.from(byTask.values()),
-            events: Array.from(byEvt.values()),
+            subjects: pruneDeleted(Array.from(bySub.values()), new Set(data.subjects.map((r) => r.id))),
+            materials: pruneDeleted(Array.from(byMat.values()), materialIds),
+            archivedMaterials: pruneDeleted(Array.from(byArchivedMat.values()), materialIds),
+            tasks: pruneDeleted(Array.from(byTask.values()), new Set(data.tasks.map((r) => r.id))),
+            events: pruneDeleted(Array.from(byEvt.values()), new Set(data.events.map((r) => r.id))),
             profile,
             skills: Array.from(bySkill.values()),
             archivedSkills: Array.from(byArchivedSkill.values()),
             skillEvents: Array.from(bySkillEvent.values()).slice(-SKILL_EVENTS_CAP),
-            highlights: Array.from(byHighlight.values()),
-            chapters: Array.from(byChapter.values()),
-            flashcards: Array.from(byFlashcard.values()),
-            summaries: Array.from(bySummary.values()),
-            textEdits: Array.from(byTextEdit.values()),
+            highlights: pruneDeleted(Array.from(byHighlight.values()), new Set((data.highlights ?? []).map((r) => r.id))),
+            chapters: pruneDeleted(Array.from(byChapter.values()), new Set((data.chapters ?? []).map((r) => r.id))),
+            flashcards: pruneDeleted(Array.from(byFlashcard.values()), new Set((data.flashcards ?? []).map((r) => r.id))),
+            summaries: pruneDeleted(Array.from(bySummary.values()), new Set((data.summaries ?? []).map((r) => r.id))),
+            textEdits: pruneDeleted(Array.from(byTextEdit.values()), new Set((data.textEdits ?? []).map((r) => r.id))),
           }
         })
       },
