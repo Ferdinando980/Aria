@@ -417,6 +417,20 @@ export const useAppStore = create<AppState>()(
       },
 
       hydrateFromRemote: (data) => {
+        // Real bug found live (2026-08-26, real user report: "nel calendario
+        // ancora vedo il piano di studi di prima" -- AFTER the orphan-prune
+        // fix below already shipped). That fix drops a stale StudyPlanChapter
+        // from the LOCAL `studyPlans` map, but each of its items may already
+        // have created a REAL `Task` (StudyPlanItem.taskId) that was synced
+        // to Supabase before the source material/subject disappeared --
+        // pruning the plan's own bookkeeping never touched that Task, so it
+        // just kept sitting in the `tasks` table with a perfectly valid
+        // subject_id, showing up forever in Calendar/Oggi. Collected here
+        // (mutated inside the set() callback below, read after it returns)
+        // so the matching real tasks can be deleted too -- both locally and
+        // via syncDelete, same as removeStudyPlan already does for an
+        // explicit delete.
+        const droppedTaskIds = new Set<string>()
         set((state) => {
           const bySub = new Map(state.subjects.map((s) => [s.id, s]))
           for (const r of data.subjects) {
@@ -713,6 +727,16 @@ export const useAppStore = create<AppState>()(
           // for the real `chapters` field as well).
           const survivingChapters = pruneDeleted(Array.from(byChapter.values()), new Set((data.chapters ?? []).map((r) => r.id)))
           const survivingChapterIds = new Set(survivingChapters.map((c) => c.id))
+          const collectTaskIds = (chapters: StudyPlanChapter[]) => {
+            for (const pc of chapters) for (const it of pc.items) if (it.taskId) droppedTaskIds.add(it.taskId)
+          }
+          for (const [k, planChapters] of Object.entries(state.studyPlans)) {
+            if (!planKeyStillValid(k)) {
+              collectTaskIds(planChapters)
+              continue
+            }
+            collectTaskIds(planChapters.filter((pc) => pc.materialChapterId && !survivingChapterIds.has(pc.materialChapterId)))
+          }
           const studyPlans = Object.fromEntries(
             Object.entries(state.studyPlans)
               .filter(([k]) => planKeyStillValid(k))
@@ -726,7 +750,7 @@ export const useAppStore = create<AppState>()(
             subjects: pruneDeleted(Array.from(bySub.values()), new Set(data.subjects.map((r) => r.id))),
             materials: pruneDeleted(Array.from(byMat.values()), materialIds),
             archivedMaterials: pruneDeleted(Array.from(byArchivedMat.values()), materialIds),
-            tasks: pruneDeleted(Array.from(byTask.values()), new Set(data.tasks.map((r) => r.id))),
+            tasks: pruneDeleted(Array.from(byTask.values()), new Set(data.tasks.map((r) => r.id))).filter((t) => !droppedTaskIds.has(t.id)),
             events: pruneDeleted(Array.from(byEvt.values()), new Set(data.events.map((r) => r.id))),
             profile,
             skills: Array.from(bySkill.values()),
@@ -741,6 +765,10 @@ export const useAppStore = create<AppState>()(
             textEdits: pruneDeleted(Array.from(byTextEdit.values()), new Set((data.textEdits ?? []).map((r) => r.id))),
           }
         })
+        if (droppedTaskIds.size) {
+          const u = get().currentUserId
+          if (canSync(u)) for (const id of droppedTaskIds) syncDelete('tasks', u, id)
+        }
       },
 
       addSubject: (name, color, icon) => {
