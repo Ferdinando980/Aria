@@ -181,7 +181,19 @@ export default function CalendarPage() {
           selectable
           editable
           selectMirror
-          dayMaxEvents={3}
+          // Real user request (2026-08-25): "farei i quadrati piu' grandi,
+          // così da permettere la visione di tutte le task" -- dayMaxEvents=3
+          // meant almost every real day (a study plan alone can put 6+ tasks
+          // on one day) collapsed behind a "+N more" popover. Tried `false`
+          // (no cap) first -- rejected after a live check: FullCalendar's
+          // daygrid stretches a whole week's row to match its tallest day,
+          // so one exam-eve day with 15 tasks made an entire row enormous,
+          // the opposite of "quadrati piu' grandi" for every other day in
+          // it. A generous fixed cap covers real days directly (the real
+          // data checked live topped out at 6 on a normal day) while still
+          // bounding the pathological case behind "+more", same safety
+          // valve as before just far less eager to use it.
+          dayMaxEvents={8}
           events={fcEvents}
           eventContent={renderEventContent}
           select={onSelect}

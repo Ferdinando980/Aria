@@ -65,3 +65,11 @@
   opacity: 0.5;
   text-decoration: line-through;
 }
+
+/* Bigger day cells (2026-08-25, real user request: "i quadrati piu'
+   grandi... la visione di tutte le task"), paired with a raised
+   dayMaxEvents in Calendar.tsx so a normal day's tasks show directly
+   instead of collapsing behind "+N more" after just 3. */
+.fc-daygrid-day-frame {
+  min-height: 132px;
+}
