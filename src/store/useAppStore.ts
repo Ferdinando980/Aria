@@ -1027,6 +1027,30 @@ export const useAppStore = create<AppState>()(
         set((s) => ({
           tasks: s.tasks.map((t) => (t.id === id ? { ...t, done: true, doneAt: nowIso() } : t)),
         }))
+        // Real bug found live (2026-08-25, verifying the study-plan-on-
+        // calendar feature): completeTask never pushed the done/doneAt
+        // change to Supabase, unlike updateTask -- so App.tsx's periodic
+        // hydrateFromRemote pull (runs again on every session refresh, not
+        // just first login) would silently fetch the still-`done:false` row
+        // back and revert a completion that had just happened, taking the
+        // XP/streak gain with it since applyXp had the same gap (fixed
+        // below). Reproduced live: two tasks completed back to back, only
+        // one survived a few seconds later once a pull landed.
+        const completed = get().tasks.find((t) => t.id === id)
+        const u0 = get().currentUserId
+        if (!alreadyDone && canSync(u0) && completed)
+          syncUpsert('tasks', u0, {
+            id: completed.id,
+            subject_id: completed.subjectId,
+            title: completed.title,
+            description: completed.description,
+            due_date: completed.dueDate,
+            done: completed.done,
+            done_at: completed.doneAt,
+            priority: completed.priority,
+            estimate_minutes: completed.estimateMinutes,
+            subtasks: completed.subtasks,
+          })
         // Mirror completion back onto any study-plan step this task was
         // auto-created from (2026-08-24) -- checking a task off in Oggi
         // must also mark its plan step done, same "single source of truth,
@@ -1109,6 +1133,25 @@ export const useAppStore = create<AppState>()(
         const leveledUp = level > state.profile.level
         const { profile: bumped, result } = bumpStreak({ ...state.profile, xp, level })
         set({ profile: bumped })
+        // Same missing-sync bug as completeTask above, same fix pattern as
+        // setResearchConsent's syncUpsert('profiles', ...) just below --
+        // xp/level/streak never left the browser before this, so any pull
+        // (hydrateFromRemote runs again on every session refresh) silently
+        // reverted every completion's XP gain along with the task itself.
+        const u = get().currentUserId
+        if (canSync(u))
+          syncUpsert('profiles', u, {
+            display_name: bumped.displayName,
+            xp: bumped.xp,
+            level: bumped.level,
+            streak_count: bumped.streakCount,
+            last_active_date: bumped.lastActiveDate,
+            streak_freezes: bumped.streakFreezes,
+            research_consent: bumped.researchConsent ?? false,
+            research_consent_at: bumped.researchConsentAt,
+            skill_sharing_consent: bumped.skillSharingConsent ?? false,
+            skill_sharing_consent_at: bumped.skillSharingConsentAt,
+          })
         return { xpGained: amount, leveledUp, ...result }
       },
       registerFocusSessionCompleted: () => get().applyXp(20),

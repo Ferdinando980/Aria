@@ -95,6 +95,15 @@ create table if not exists profiles (
   skill_sharing_consent_at timestamptz,
   updated_at timestamptz not null default now()
 );
+-- Explicit ALTERs too, not just in the create-table body above (2026-08-25,
+-- same bug class as events.type just below -- see migration_2026-08-25.sql
+-- for how this one specifically went unnoticed for days: syncUpsert's
+-- fail-open swallowed the PGRST204 until completeTask/applyXp started
+-- syncing profiles for the first time).
+alter table profiles add column if not exists research_consent boolean not null default true;
+alter table profiles add column if not exists research_consent_at timestamptz;
+alter table profiles add column if not exists skill_sharing_consent boolean not null default false;
+alter table profiles add column if not exists skill_sharing_consent_at timestamptz;
 
 -- Libreria di skill (Librarian) e log eventi/metriche — porta l'architettura
 -- della ricerca Cognitive RPG dentro Aria. Vedi src/lib/skills.ts.
