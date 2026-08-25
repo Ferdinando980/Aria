@@ -85,7 +85,7 @@ function SetNewPasswordCard() {
   )
 }
 
-function ForgotPasswordCard({ onBack }: { onBack: () => void }) {
+function ForgotPasswordCard({ onBack, expiredNotice }: { onBack: () => void; expiredNotice?: string | null }) {
   const { requestPasswordReset } = useAuthStore()
   const push = useToastStore((s) => s.push)
   const [email, setEmail] = useState('')
@@ -118,6 +118,11 @@ function ForgotPasswordCard({ onBack }: { onBack: () => void }) {
             {sent ? 'Controlla la tua email: il link ti fara\' tornare qui a scegliere una nuova password.' : 'Ti mandiamo un link via email per impostarne una nuova.'}
           </p>
         </div>
+        {!sent && expiredNotice && (
+          <p className="mb-3 rounded-lg bg-[var(--color-warn)]/10 p-2 text-center text-xs text-[var(--color-warn)]">
+            Il link che hai usato non e\' piu\' valido (scaduto o gia\' usato) — richiedine uno nuovo qui sotto.
+          </p>
+        )}
         {!sent && (
           <form onSubmit={handleSubmit} className="flex flex-col gap-3">
             <Input type="email" placeholder="tuaemail@esempio.it" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus autoComplete="email" />
@@ -135,10 +140,10 @@ function ForgotPasswordCard({ onBack }: { onBack: () => void }) {
 }
 
 export function AuthGate({ children }: { children: ReactNode }) {
-  const { session, ready, recovery, signIn, signUp } = useAuthStore()
+  const { session, ready, recovery, recoveryError, signIn, signUp } = useAuthStore()
   const push = useToastStore((s) => s.push)
 
-  const [mode, setMode] = useState<'login' | 'signup' | 'forgot'>('login')
+  const [mode, setMode] = useState<'login' | 'signup' | 'forgot'>(recoveryError ? 'forgot' : 'login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -149,7 +154,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   if (!ready) return null
   if (recovery) return <SetNewPasswordCard />
   if (session) return <>{children}</>
-  if (mode === 'forgot') return <ForgotPasswordCard onBack={() => setMode('login')} />
+  if (mode === 'forgot') return <ForgotPasswordCard onBack={() => setMode('login')} expiredNotice={recoveryError} />
 
   const canSubmit = email.trim() && password.length >= 6 && (mode === 'login' || password === confirmPassword)
 
