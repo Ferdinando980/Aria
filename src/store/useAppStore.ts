@@ -166,7 +166,7 @@ interface AppState {
   removeTask: (id: string) => void
   completeTask: (id: string) => CompleteTaskResult
 
-  addEvent: (e: Omit<CalendarEvent, 'id'>) => CalendarEvent
+  addEvent: (e: Omit<CalendarEvent, 'id' | 'createdAt'>) => CalendarEvent
   updateEvent: (id: string, patch: Partial<CalendarEvent>) => void
   removeEvent: (id: string) => void
 
@@ -470,6 +470,7 @@ export const useAppStore = create<AppState>()(
           for (const r of data.events) {
             byEvt.set(r.id, {
               id: r.id,
+              createdAt: r.created_at,
               subjectId: r.subject_id ?? undefined,
               taskId: r.task_id ?? undefined,
               title: r.title,
@@ -1119,7 +1120,7 @@ export const useAppStore = create<AppState>()(
       },
 
       addEvent: (e) => {
-        const event: CalendarEvent = { ...e, id: uid() }
+        const event: CalendarEvent = { ...e, id: uid(), createdAt: nowIso() }
         set((s) => ({ events: [...s.events, event] }))
         const u = get().currentUserId
         if (canSync(u))

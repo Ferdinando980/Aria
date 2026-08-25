@@ -16,8 +16,8 @@ const Summaries = lazy(() => import('./pages/Summaries'))
 const ProgressPage = lazy(() => import('./pages/Progress'))
 const Game = lazy(() => import('./pages/Game'))
 import { useAppStore } from './store/useAppStore'
-import { syncPullAll, syncPushAll } from './lib/sync'
-import { isSupabaseConfigured } from './lib/supabase'
+import { syncPullAll, syncPushAll, canSync } from './lib/sync'
+import { isSupabaseConfigured, supabase } from './lib/supabase'
 
 // Self-heal for a SPECIFIC pre-2026-08-21 data artifact (found live
 // 2026-08-24, user report: "vedo uno 0" on a real calendar event). The fix
@@ -89,6 +89,23 @@ function SyncBootstrap() {
       // server yet, so push it up once before pulling — otherwise a task
       // added while offline/logged-out would look like it "disappeared".
       if (state.pushedLocalDataFor !== userId) {
+        // Real bug found live (2026-08-25, moving the app to a new Netlify
+        // origin): a browser origin change resets pushedLocalDataFor same as
+        // a genuinely new device, but the account is NOT new -- it already
+        // has a real profile row on Supabase. The array-based tables below
+        // are safe either way (an empty local array pushes zero rows), but
+        // `profile` is a singleton always pushed unconditionally -- doing so
+        // with the untouched local default (XP 0, level 1, streak 0) BEFORE
+        // the real remote row is even pulled overwrote real progress with
+        // zeros. Fix: check whether a remote profile already exists first;
+        // only push the local one when it doesn't (genuinely first-ever
+        // login), otherwise pass null and let the pull below hydrate the
+        // real thing untouched.
+        let profileToPush: typeof state.profile | null = state.profile
+        if (canSync(userId) && supabase) {
+          const { data: existingProfile } = await supabase.from('profiles').select('user_id').eq('user_id', userId).maybeSingle()
+          if (existingProfile) profileToPush = null
+        }
         const { ok, failedTables } = await syncPushAll(userId!, {
           subjects: state.subjects,
           // archivedMaterials included here too -- same 'materials' table,
@@ -96,7 +113,7 @@ function SyncBootstrap() {
           materials: [...state.materials, ...state.archivedMaterials],
           tasks: state.tasks,
           events: state.events,
-          profile: state.profile,
+          profile: profileToPush,
           // archivedSkills included here too -- same 'skills' table, ARCHIVED
           // status distinguishes them on the way back in (hydrateFromRemote).
           skills: [...state.skills, ...state.archivedSkills],

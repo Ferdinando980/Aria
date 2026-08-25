@@ -53,7 +53,13 @@ export async function syncPushAll(
     materials: import('./types').Material[]
     tasks: import('./types').Task[]
     events: import('./types').CalendarEvent[]
-    profile: import('./types').ProfileState
+    // null = "don't touch the remote profile row" (see App.tsx's syncUp:
+    // on a brand-new browser origin for an ALREADY-EXISTING account, the
+    // local profile is just the untouched default -- pushing it here would
+    // overwrite real XP/level/streak with zeros before the real row is even
+    // pulled down. Caller checks remote existence first and passes null in
+    // that case; a genuinely first-ever login still passes the real object).
+    profile: import('./types').ProfileState | null
     skills: import('./types').Skill[]
     skillEvents: import('./types').SkillEvent[]
     highlights: import('./types').MaterialHighlight[]
@@ -135,19 +141,21 @@ export async function syncPushAll(
       type: e.type,
     })
   }
-  pushRow('profiles', {
-    user_id: userId,
-    display_name: data.profile.displayName,
-    xp: data.profile.xp,
-    level: data.profile.level,
-    streak_count: data.profile.streakCount,
-    last_active_date: data.profile.lastActiveDate,
-    streak_freezes: data.profile.streakFreezes,
-    research_consent: data.profile.researchConsent ?? true, // see useAppStore.ts's hydrateFromRemote comment -- never push a silent false
-    research_consent_at: data.profile.researchConsentAt,
-    skill_sharing_consent: data.profile.skillSharingConsent ?? false,
-    skill_sharing_consent_at: data.profile.skillSharingConsentAt,
-  })
+  if (data.profile) {
+    pushRow('profiles', {
+      user_id: userId,
+      display_name: data.profile.displayName,
+      xp: data.profile.xp,
+      level: data.profile.level,
+      streak_count: data.profile.streakCount,
+      last_active_date: data.profile.lastActiveDate,
+      streak_freezes: data.profile.streakFreezes,
+      research_consent: data.profile.researchConsent ?? true, // see useAppStore.ts's hydrateFromRemote comment -- never push a silent false
+      research_consent_at: data.profile.researchConsentAt,
+      skill_sharing_consent: data.profile.skillSharingConsent ?? false,
+      skill_sharing_consent_at: data.profile.skillSharingConsentAt,
+    })
+  }
   for (const sk of data.skills) {
     pushRow('skills', {
       id: sk.id,

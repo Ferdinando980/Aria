@@ -40,12 +40,6 @@
   color: var(--color-primary);
   font-weight: 700;
 }
-.fc-event {
-  border-radius: 8px;
-  padding: 1px 6px;
-  font-size: 0.75rem;
-  border: none;
-}
 .fc-list-event:hover td {
   background: var(--color-surface-2);
 }
@@ -58,18 +52,70 @@
   overflow: hidden;
 }
 
-/* Real Task entries (2026-08-24, see Calendar.tsx) fade + strike once done,
-   same "opacity-50" treatment TaskItem.tsx already uses in Oggi -- one
-   consistent "this is finished" language across both surfaces. */
-.fc-task-done {
+/* Real Task entries fade + strike once done, same "opacity-50" treatment
+   TaskItem.tsx already uses in Oggi -- one consistent "this is finished"
+   language across both surfaces (2026-08-24). */
+.fc-chip-done {
   opacity: 0.5;
   text-decoration: line-through;
 }
 
-/* Bigger day cells (2026-08-25, real user request: "i quadrati piu'
-   grandi... la visione di tutte le task"), paired with a raised
-   dayMaxEvents in Calendar.tsx so a normal day's tasks show directly
-   instead of collapsing behind "+N more" after just 3. */
-.fc-daygrid-day-frame {
+/* Expand-on-hover (2026-08-25, real user request after an earlier redesign
+   attempt was rejected as "piu' disordinato" -- see Calendar.tsx's comment
+   above `dayMaxEvents={false}`): each day keeps its original plain-grid
+   shape and size at rest, clipped to a fixed height. Hovering pops that ONE
+   cell out (position:absolute, escapes the table's normal flow so sibling
+   cells are untouched) to show its real, un-capped list of tasks/events,
+   scrollable if it's long, then it springs back on mouseleave. `position:
+   relative` on the day <td> itself gives the popped-out frame something to
+   anchor to. */
+.fc .fc-daygrid-day {
+  position: relative;
+}
+.fc .fc-daygrid-day-frame {
   min-height: 132px;
+  max-height: 132px;
+  overflow: hidden;
+  border-radius: 8px;
+  transition:
+    max-height 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.fc .fc-daygrid-day:hover .fc-daygrid-day-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  background: var(--color-surface);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.5);
+}
+
+/* --- Chips: one plain colored pill, one accent color each (the subject's
+   own color, or warn for an exam), like the very first version of this
+   file -- deliberately not fancier than that (2026-08-25 walk-back, see
+   Calendar.tsx). Built in renderEventContent from extendedProps so there's
+   still one single place controlling how a chip looks either way. */
+.fc-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  border-radius: 8px;
+  padding: 1px 6px;
+  font-size: 0.75rem;
+  overflow: hidden;
+}
+.fc-chip-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fc-chip-icon {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  line-height: 1;
 }

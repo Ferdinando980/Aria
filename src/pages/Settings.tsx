@@ -34,7 +34,8 @@ function formatRate(r: number | null) {
 export default function Settings() {
   const profile = useAppStore((s) => s.profile)
   const push = useToastStore((s) => s.push)
-  const { session, signOut } = useAuthStore()
+  const { session, signOut, requestPasswordReset } = useAuthStore()
+  const [resettingPassword, setResettingPassword] = useState(false)
   const librarianEnabled = useAppStore((s) => s.librarianEnabled)
   const setLibrarianEnabled = useAppStore((s) => s.setLibrarianEnabled)
   const skills = useAppStore((s) => s.skills)
@@ -135,9 +136,30 @@ export default function Settings() {
           ) : (
             <>
               <CardSubtitle className="mb-3">Connessa come {session?.user.email}. I dati si sincronizzano automaticamente su ogni dispositivo dove accedi con questa email.</CardSubtitle>
-              <Button variant="outline" size="sm" onClick={signOut}>
-                <LogOut size={14} /> Esci
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={resettingPassword}
+                  onClick={async () => {
+                    if (!session?.user.email) return
+                    setResettingPassword(true)
+                    try {
+                      await requestPasswordReset(session.user.email)
+                      push({ title: 'Email inviata', description: 'Apri il link per scegliere una nuova password.', tone: 'good' })
+                    } catch {
+                      push({ title: 'Non e\' andata', description: 'Riprova tra poco.', tone: 'warn' })
+                    } finally {
+                      setResettingPassword(false)
+                    }
+                  }}
+                >
+                  Cambia password
+                </Button>
+                <Button variant="outline" size="sm" onClick={signOut}>
+                  <LogOut size={14} /> Esci
+                </Button>
+              </div>
             </>
           )}
         </Card>

@@ -4,6 +4,7 @@ import { Card, CardTitle, CardSubtitle } from '../components/ui/Card'
 import { Progress } from '../components/ui/Progress'
 import { useAppStore } from '../store/useAppStore'
 import { XP_PER_LEVEL } from '../lib/types'
+import { localDateStr } from '../lib/utils'
 
 const MILESTONES = [3, 7, 14, 30, 60, 100]
 
@@ -20,8 +21,8 @@ export default function ProgressPage() {
     for (let i = 6; i >= 0; i--) {
       const d = new Date()
       d.setDate(d.getDate() - i)
-      const key = d.toISOString().slice(0, 10)
-      const done = tasks.filter((t) => t.done && t.doneAt?.slice(0, 10) === key).length
+      const key = localDateStr(d)
+      const done = tasks.filter((t) => t.done && t.doneAt && localDateStr(new Date(t.doneAt)) === key).length
       days.push({ label: d.toLocaleDateString('it-IT', { weekday: 'short' }).slice(0, 1).toUpperCase(), done })
     }
     return days

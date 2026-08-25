@@ -209,6 +209,7 @@ export interface Task {
 
 export interface CalendarEvent {
   id: ID
+  createdAt: string
   subjectId?: ID
   title: string
   start: string // ISO datetime

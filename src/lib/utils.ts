@@ -14,6 +14,28 @@ export function nowIso() {
   return new Date().toISOString()
 }
 
+/** LOCAL calendar-day string (YYYY-MM-DD), not UTC -- real bug fix
+ * (2026-08-25, user report: "la sezione completati oggi, prende anche
+ * quelli di ieri"). `doneAt`/"is this today" comparisons across the app
+ * used `new Date().toISOString().slice(0, 10)`, which is the UTC date, not
+ * the user's local one -- for a positive UTC-offset timezone (Italy is
+ * UTC+1/+2), the two disagree for roughly the first two hours after local
+ * midnight: a task completed at, say, 00:20 local (already "today" to the
+ * user) and one completed the PREVIOUS evening at 23:00 local both land on
+ * the same UTC date string during that window, so "Completati oggi" showed
+ * both. Same `pad()`-based local-date construction already used in
+ * Calendar.tsx's onEventDrop for the identical class of bug. Only wired
+ * into Today.tsx/Progress.tsx for now (the two places the report and its
+ * directly-adjacent "last 7 days" count actually surface) -- the app has
+ * several other `toISOString().slice(0, 10)` call sites (study-plan
+ * scheduling, streak day-boundary, flashcard/recall due dates) with the
+ * same latent skew, deliberately left alone here to keep this fix scoped
+ * to what was actually reported. */
+export function localDateStr(d: Date = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
 /** Black or white, whichever reads better on `hexColor` -- relative
  * luminance (WCAG's own formula, sRGB gamma-corrected, not a plain RGB
  * average which gets bright yellows/ambers wrong). Fixes a real bug

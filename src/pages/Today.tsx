@@ -7,14 +7,15 @@ import { TaskItem } from '../components/today/TaskItem'
 import { Card, CardTitle } from '../components/ui/Card'
 import { GameWidget } from '../components/game/GameWidget'
 import { useAppStore } from '../store/useAppStore'
+import { localDateStr } from '../lib/utils'
 
 function isToday(dateStr?: string) {
   if (!dateStr) return false
-  return dateStr === new Date().toISOString().slice(0, 10)
+  return dateStr === localDateStr()
 }
 function isOverdue(dateStr?: string) {
   if (!dateStr) return false
-  return dateStr < new Date().toISOString().slice(0, 10)
+  return dateStr < localDateStr()
 }
 
 export default function Today() {
@@ -23,7 +24,7 @@ export default function Today() {
   const { overdue, today, doneToday, todayPageRange } = useMemo(() => {
     const overdue = tasks.filter((t) => !t.done && isOverdue(t.dueDate))
     const today = tasks.filter((t) => !t.done && isToday(t.dueDate))
-    const doneToday = tasks.filter((t) => t.done && t.doneAt?.slice(0, 10) === new Date().toISOString().slice(0, 10))
+    const doneToday = tasks.filter((t) => t.done && t.doneAt && localDateStr(new Date(t.doneAt)) === localDateStr())
     // Real user request (2026-08-24): "oggi ho fatto 10-15 pagine, domani
     // 20-25" -- aggregate of whichever of today's tasks actually carry a real
     // page range (see Task.pageRange); undefined, not a guess, when none do.

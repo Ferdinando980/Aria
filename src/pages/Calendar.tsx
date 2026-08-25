@@ -4,6 +4,7 @@ import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
 import listPlugin from '@fullcalendar/list'
 import interactionPlugin from '@fullcalendar/interaction'
+import itLocale from '@fullcalendar/core/locales/it'
 import type { DateSelectArg, EventClickArg, EventContentArg } from '@fullcalendar/core'
 import { Check } from 'lucide-react'
 import { Card } from '../components/ui/Card'
@@ -45,59 +46,66 @@ export default function CalendarPage() {
   const PRIMARY_HEX = '#6c5ce7'
   const CALM_HEX = '#74b9ff'
 
+  // Walked back (2026-08-25, real user pushback the SAME day on the redesign
+  // right above this comment in git history: "non mi piace l'ui del
+  // calendario... mi sembra tutto piu' disordinato... i quadrati andavano
+  // bene di forma"). The card-grid/ticket-style version was a bigger swing
+  // than asked for -- more competing colors and shapes read as MORE
+  // cluttered, not better. Back to one accent color per chip (the subject's
+  // own color, or warn for an exam) painted as a plain filled pill like the
+  // very first version, still built from `extendedProps` in one place
+  // (renderEventContent) so there's a single source of truth either way.
   const fcEvents = useMemo(() => {
     const fromEvents = events.map((e) => {
       const isExam = e.type === 'esame'
-      const backgroundColor = isExam ? 'var(--color-warn)' : (e.color ?? 'var(--color-primary)')
-      // Real bug fix (2026-08-21, user report: "i tag non funzionano
-      // benissimo, di colore") -- text color used to just inherit the
-      // theme's light default, unreadable on lighter Subject colors
-      // (amber, mint, light blue...) at this event-chip size. Compute per
-      // event instead of assuming white always works.
-      const textColorSource = isExam ? WARN_HEX : (e.color ?? PRIMARY_HEX)
+      const accentColor = isExam ? WARN_HEX : (e.color ?? PRIMARY_HEX)
       return {
         id: e.id,
         title: e.title,
         start: e.start,
         end: e.end,
         allDay: e.allDay,
-        backgroundColor,
-        textColor: contrastTextColor(textColorSource),
         borderColor: 'transparent',
-        extendedProps: { isTask: false },
+        extendedProps: { isTask: false, isExam, accentColor, textColor: contrastTextColor(accentColor) },
       }
     })
     const fromTasks = tasks
       .filter((t) => t.dueDate)
       .map((t) => {
-        const subjectColor = subjects.find((s) => s.id === t.subjectId)?.color
-        const backgroundColor = subjectColor ?? 'var(--color-calm)'
+        const subjectColor = subjects.find((s) => s.id === t.subjectId)?.color ?? CALM_HEX
         return {
           id: TASK_ID_PREFIX + t.id,
           title: t.title + (t.estimateMinutes ? ` · ${t.estimateMinutes} min` : ''),
           start: t.dueDate,
           allDay: true,
-          backgroundColor,
-          textColor: contrastTextColor(subjectColor ?? CALM_HEX),
           borderColor: 'transparent',
-          classNames: t.done ? ['fc-task-done'] : [],
           durationEditable: false,
-          extendedProps: { isTask: true, done: t.done },
+          extendedProps: { isTask: true, done: t.done, accentColor: subjectColor, textColor: contrastTextColor(subjectColor) },
         }
       })
     return [...fromEvents, ...fromTasks]
   }, [events, tasks, subjects])
 
   function renderEventContent(arg: EventContentArg) {
-    if (!arg.event.extendedProps.isTask) return undefined
+    const { isTask, isExam, accentColor, textColor, done } = arg.event.extendedProps as {
+      isTask: boolean
+      isExam: boolean
+      accentColor: string
+      textColor: string
+      done?: boolean
+    }
     return (
-      <div className="flex items-center gap-1 overflow-hidden px-0.5">
-        <span
-          className={`grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full border ${arg.event.extendedProps.done ? 'border-white/70 bg-white/70' : 'border-current'}`}
-        >
-          {arg.event.extendedProps.done && <Check size={9} className="text-[var(--color-bg)]" />}
-        </span>
-        <span className="truncate">{arg.event.title}</span>
+      <div className={`fc-chip${done ? ' fc-chip-done' : ''}`} style={{ background: accentColor, color: textColor }}>
+        {isTask ? (
+          <span
+            className={`grid h-3 w-3 shrink-0 place-items-center rounded-full border ${done ? 'border-white/70 bg-white/70' : 'border-current'}`}
+          >
+            {done && <Check size={8} className="text-[var(--color-bg)]" />}
+          </span>
+        ) : isExam ? (
+          <span className="fc-chip-icon">⚠</span>
+        ) : null}
+        <span className="fc-chip-title">{arg.event.title}</span>
       </div>
     )
   }
@@ -166,7 +174,7 @@ export default function CalendarPage() {
         </p>
       </div>
 
-      <Card className="overflow-hidden p-2 sm:p-4">
+      <Card className="p-2 sm:p-4">
         <FullCalendar
           plugins={[dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin]}
           initialView="dayGridMonth"
@@ -175,25 +183,29 @@ export default function CalendarPage() {
             center: 'title',
             right: 'dayGridMonth,timeGridWeek,listWeek',
           }}
+          locales={[itLocale]}
           locale="it"
           buttonText={{ today: 'oggi', month: 'mese', week: 'settimana', list: 'lista' }}
           height="auto"
           selectable
           editable
           selectMirror
-          // Real user request (2026-08-25): "farei i quadrati piu' grandi,
-          // così da permettere la visione di tutte le task" -- dayMaxEvents=3
-          // meant almost every real day (a study plan alone can put 6+ tasks
-          // on one day) collapsed behind a "+N more" popover. Tried `false`
-          // (no cap) first -- rejected after a live check: FullCalendar's
-          // daygrid stretches a whole week's row to match its tallest day,
-          // so one exam-eve day with 15 tasks made an entire row enormous,
-          // the opposite of "quadrati piu' grandi" for every other day in
-          // it. A generous fixed cap covers real days directly (the real
-          // data checked live topped out at 6 on a normal day) while still
-          // bounding the pathological case behind "+more", same safety
-          // valve as before just far less eager to use it.
-          dayMaxEvents={8}
+          // Real user ask, twice the same day (2026-08-25): first "farei i
+          // quadrati piu' grandi, così da permettere la visione di tutte le
+          // task" (dayMaxEvents=3 hid most real days behind "+N more"), then
+          // after a fixed-cap-of-8 attempt still felt cluttered: "i quadrati
+          // andavano bene di forma, magari potevi fare che si espandevano
+          // andandoci sopra" -- expand on hover instead of permanently
+          // resizing the grid. `false` here means every task really is
+          // rendered in the DOM for every day (no FC-side cap, no "+more"
+          // link at all); calendar.css clips each day back down to its
+          // normal size by default (overflow:hidden) and pops the hovered
+          // day out full-height, scrollable, above its neighbors -- see
+          // that file's comment on `.fc-daygrid-day:hover`. This is exactly
+          // the earlier-rejected "whole row grows for one busy day" problem
+          // turned into a feature: now only the ONE hovered cell grows,
+          // every other day in that row stays its normal size.
+          dayMaxEvents={false}
           events={fcEvents}
           eventContent={renderEventContent}
           select={onSelect}
