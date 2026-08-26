@@ -71,7 +71,8 @@ export default function Flashcards() {
   const [index, setIndex] = useState(0)
   const [revealed, setRevealed] = useState(false)
 
-  const subjectMaterials = materials.filter((m) => m.subjectId === subjectId && isViewableInline(m))
+  // Exam papers (Cheat Study) excluded -- they're not study material (2026-08-26).
+  const subjectMaterials = materials.filter((m) => m.subjectId === subjectId && isViewableInline(m) && !m.isExamPaper)
   const material = materials.find((m) => m.id === materialId)
   const materialChapters = chapters.filter((c) => c.materialId === materialId).sort((a, b) => a.order - b.order)
   const chapter = materialChapters.find((c) => c.id === chapterId)

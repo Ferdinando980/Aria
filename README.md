@@ -4,7 +4,7 @@ Aria è nata per risolvere un problema molto concreto: organizzare lo studio qua
 
 Cattura rapida dei pensieri da un pulsante sempre raggiungibile, una home "Oggi" che mostra solo quello che conta adesso invece del calendario intero, task grossi spezzabili in micro-passi con l'aiuto della chat AI, streak che si "congelano" invece di azzerarsi di colpo, e un ciclo di richiamo attivo distanziato (spaced retrieval, SM-2) integrato nella home invece che relegato in un angolo. È una **PWA**: un solo progetto, installabile su PC e telefono, funziona offline. Parte subito senza account (i dati restano sul dispositivo); se vuoi sincronizzare più device, colleghi Supabase gratuitamente (vedi sotto).
 
-Live (provvisorio): [funny-starship-804504.netlify.app](https://funny-starship-804504.netlify.app)
+Live (provvisorio): [aria-jarvis.netlify.app](https://aria-jarvis.netlify.app)
 
 ## Cosa fa, in pratica
 
@@ -16,6 +16,7 @@ Live (provvisorio): [funny-starship-804504.netlify.app](https://funny-starship-8
 - **Flashcard e Riassunti** — sezioni dedicate, generate per capitolo o sottosezione (rilevati automaticamente dal documento). I riassunti seguono regole pensate per l'ADHD: paragrafi corti, intestazioni con emoji ed etichette colorate (definizione, esempio, attenzione...) come veri appunti evidenziati, formule matematiche vere (KaTeX) invece di LaTeX grezzo, il dato chiave in grassetto.
 - **Focus timer** con messaggi da "body double" invece di un countdown freddo, e un minigioco (Tetris, 10 minuti/giorno) in una scheda separata per le pause, sbloccato solo a timer fermo.
 - **Progressi, senza punizioni** — XP, livelli, streak che si congelano invece di azzerarsi: mai una barra rossa, mai un badge "fallito". Il linguaggio evita sistematicamente il tono da rimprovero, in ogni schermata.
+- **Cheat Study** — carichi una traccia d'esame (PDF o foto) e Aria individua gli esercizi da soli; per ognuno genera una scaletta di esercizi propedeutici dal più facile in su (per non bloccarsi davanti a quello vero), una spiegazione passo-passo come timeline numerata, e un esercizio equivalente per allenarsi oltre alla traccia. Figure (alberi, grafi, automi) come diagrammi Mermaid veri, non immagini generate — gratuito, stesso modello di testo. Scelta multipla come card grandi e cliccabili quando l'esercizio è davvero a scelta multipla, mai forzata. Ogni sezione si scarica come PDF pulito, pronto per essere usato come vera prova d'allenamento.
 
 ## Il laboratorio dentro l'app
 

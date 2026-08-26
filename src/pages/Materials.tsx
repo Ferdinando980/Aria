@@ -56,7 +56,11 @@ export default function Materials() {
   const [jumpTarget, setJumpTarget] = useState<{ page: number; nonce: number; highlightId?: string } | undefined>()
 
   const activeSubject = subjects.find((s) => s.id === activeSubjectId)
-  const activeMaterials = materials.filter((m) => m.subjectId === activeSubjectId)
+  // Exam papers uploaded through Cheat Study are excluded here (2026-08-26,
+  // real user correction: "le tracce di esame NON devono essere messe in
+  // materiale, non c'entrano un cazzo") -- they live only in Cheat Study's
+  // own list, never in the general study-material library.
+  const activeMaterials = materials.filter((m) => m.subjectId === activeSubjectId && !m.isExamPaper)
   const activeMaterial = activeMaterials.find((m) => m.id === activeMaterialId) ?? activeMaterials[0] ?? null
 
   async function handleDrop(e: React.DragEvent) {
@@ -294,7 +298,7 @@ export default function Materials() {
 
       <div className={cn('grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4', subjects.length === 0 && 'grid-cols-1 sm:grid-cols-1 lg:grid-cols-1')}>
         {subjects.map((s) => {
-          const count = materials.filter((m) => m.subjectId === s.id).length
+          const count = materials.filter((m) => m.subjectId === s.id && !m.isExamPaper).length
           return (
             <Card key={s.id} className="group relative cursor-pointer p-4 transition-transform hover:-translate-y-0.5" onClick={() => setActiveSubjectId(s.id)}>
               <button

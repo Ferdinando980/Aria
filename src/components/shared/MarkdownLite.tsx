@@ -1,6 +1,7 @@
 import { Fragment } from 'react'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
+import { MermaidDiagram } from './MermaidDiagram'
 
 /**
  * Renders exactly the markdown subset this app's own prompts ask Gemini to
@@ -205,13 +206,32 @@ export function MarkdownLite({
       flushList(key)
       continue
     }
+    // A bare horizontal-rule line (2026-08-26, real model output found live
+    // in a Cheat Study generation despite the prompt not asking for one) --
+    // shown as a literal "---" otherwise, same class of bug block-formula's
+    // own dedicated check above already exists to avoid. Standard markdown
+    // convention (3+ of the same rule char, optionally spaced), not just a
+    // fixed "---" string.
+    if (/^(-\s*){3,}$|^(\*\s*){3,}$|^(_\s*){3,}$/.test(line)) {
+      flushList(key)
+      blocks.push(<hr key={key} className="my-3 border-[var(--color-border)]" />)
+      continue
+    }
     if (line.startsWith('```')) {
       flushList(key)
+      const fenceLang = line.slice(3).trim().toLowerCase()
       const codeLines: string[] = []
       i++
       while (i < lines.length && !lines[i].trim().startsWith('```')) {
         codeLines.push(lines[i])
         i++
+      }
+      // Figures as diagrams, not raster images (2026-08-26) -- see
+      // MermaidDiagram's own comment for why (real image generation needs a
+      // paid Gemini tier; this reuses the free text model's own output).
+      if (fenceLang === 'mermaid') {
+        blocks.push(<MermaidDiagram key={key} code={codeLines.join('\n')} />)
+        continue
       }
       blocks.push(
         <pre key={key} className="my-2 overflow-x-auto rounded-lg bg-[var(--color-surface-2)] p-3 text-xs">

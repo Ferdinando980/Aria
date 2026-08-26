@@ -632,15 +632,59 @@ Un capitolo può mescolare più tipi in sezioni diverse (es. una definizione seg
 // costruisce comunque il materiale necessario dalla propria conoscenza,
 // dichiarandolo esplicitamente invece di fingere di aver letto qualcosa che
 // non esiste (stessa disciplina di fs_uncertainty_disclosure_check).
-const GROUNDED_NOTE = `Basati SOLO sul materiale di studio reale fornito qui sotto -- non inventare formule, teoremi o passaggi che non ci sono. Se il materiale non copre completamente l'esercizio, dillo esplicitamente in una riga all'inizio ("Il materiale non copre [x], la spiegazione di quella parte è generica") invece di fingere che sia tutto coperto.`
-const UNGROUNDED_NOTE = `Non hai nessun materiale di studio specifico dell'utente collegato -- usa la tua conoscenza generale dell'argomento per costruire comunque una spiegazione utile, ma dillo esplicitamente in una riga all'inizio ("Nessun materiale collegato -- spiegazione basata su conoscenza generale, verificala col tuo corso") invece di far credere che venga dal materiale dell'utente.`
+// "[NOTA] " prefix (2026-08-26, real user request: PDF export needs to be
+// usable as an actual clean worksheet/prova, so this disclosure has to be
+// strippable from print without also hiding it on screen -- see
+// CheatStudy.tsx's stripNotaForPrint()). Before this it was just a plain
+// first line with no marker, indistinguishable from real content.
+const GROUNDED_NOTE = `Basati SOLO sul materiale di studio reale fornito qui sotto -- non inventare formule, teoremi o passaggi che non ci sono. Se il materiale non copre completamente l'esercizio, dillo esplicitamente in una riga all'inizio, preceduta da "[NOTA] " (es. "[NOTA] Il materiale non copre [x], la spiegazione di quella parte è generica") invece di fingere che sia tutto coperto.`
+const UNGROUNDED_NOTE = `Non hai nessun materiale di studio specifico dell'utente collegato -- usa la tua conoscenza generale dell'argomento per costruire comunque una spiegazione utile, ma dillo esplicitamente in una riga all'inizio, preceduta da "[NOTA] " (es. "[NOTA] Nessun materiale collegato -- spiegazione basata su conoscenza generale, verificala col tuo corso") invece di far credere che venga dal materiale dell'utente.`
+
+// Figures as Mermaid diagrams, not raster images (2026-08-26, real user
+// request after seeing an exercise about a figure -- a tree, a graph --
+// with no way to show one). Real image generation needs a Gemini model
+// outside the free tier (verified live against the user's own key: every
+// image-capable model returns `limit: 0` on the free tier, not exhausted
+// quota -- a hard product limit, not something retrying fixes). Mermaid is
+// the free alternative: the SAME already-working text model describes the
+// structure as a diagram spec, MarkdownLite's MermaidDiagram renders it
+// client-side -- zero extra API cost, and often more precise than an AI-
+// drawn image for exactly this kind of figure (a BST from specific
+// insertions, a specific graph) since Mermaid renders the exact structure
+// described, not an approximation. Optional by design -- explicitly only
+// for exercises a figure genuinely helps, never forced onto every exercise
+// (most are plain calculation/proof exercises with nothing to draw).
+const MERMAID_FIGURE_RULE = `- Se (e SOLO se) l'esercizio riguarda una struttura visualizzabile (albero, grafo, lista concatenata, automa/macchina a stati, diagramma di flusso di un algoritmo, struttura dati in generale) e disegnarla aiuta davvero a capire la soluzione, aggiungi UNA figura: un blocco \`\`\`mermaid con sintassi Mermaid valida (flowchart/graph per alberi e grafi: "graph TD" poi righe "A --> B", "stateDiagram-v2" per automi) SUBITO dopo il passo/paragrafo a cui si riferisce, introdotto dalla riga "[FIGURA] Didascalia breve" prima del blocco. Mai per esercizi puramente di calcolo/dimostrazione senza una struttura reale da disegnare -- niente figura è la norma, non l'eccezione.`
+
+// Multiple choice as real clickable cards, never forced (2026-08-26, real
+// user mockup + explicit correction: "scelta multipla solo dove ha senso...
+// non serve forzarla"). Applies wherever the underlying exercise genuinely
+// IS multiple choice -- including a REAL exam question that already lists
+// discrete options in its own text (a live example: "chi arriva prima:
+// Anna/Lisa/Sara") -- reproduce THOSE options structurally instead of
+// prose-describing them, so CheatStudy's RichBlock can render real
+// clickable answer cards. Never invented for an open calculation/proof.
+const CHOICE_RULE = `- Se (e SOLO se) l'esercizio ha risposte discrete e alternative reali (una domanda a risposta multipla, o un confronto tra un numero fisso di opzioni tipo "chi arriva prima tra X, Y, Z") -- MAI inventata per un esercizio di calcolo aperto o una dimostrazione -- presenta le opzioni con questo formato ESATTO, una riga "[SCELTA]", poi una riga "(LETTERA) testo opzione" per ciascuna (2-5 opzioni, lettere A, B, C...), poi una riga finale "[RISPOSTA] LETTERA" con la lettera corretta -- nessun altro testo tra queste righe.`
+
+// Base-10 place-value blocks (2026-08-26, real user mockup: "il valore
+// posizionale è mostrato con blocchi visivi (barre da 10 + unità), non solo
+// testo"). Opt-in per number, only when the exercise's point IS place value
+// (decine/unità, cifra che vale di più...) -- not decoration for every
+// number that happens to appear.
+const PLACE_VALUE_RULE = `- Se (e SOLO se) l'esercizio riguarda il valore posizionale di un numero a due cifre (decine/unità, "quale cifra vale di più", scomposizione in decine e unità), aggiungi una riga "[BLOCCHI] N" (N è il numero intero, es. "[BLOCCHI] 82") subito dopo averlo introdotto -- viene mostrato come blocchi visivi, non serve descriverlo a parole oltre a quello che scrivi normalmente.`
 
 const CHEAT_STUDY_PROMPT = `Spieghi la soluzione di un esercizio d'esame, per una persona con ADHD che sta usando la traccia per esercitarsi.
 Regole, IMPORTANTI:
 {{GROUNDING_NOTE}}
+- Parti dal presupposto che chi legge NON conosce l'argomento: la prima volta che nomini un termine tecnico, spiegalo in una frase semplice PRIMA di usarlo per ragionare -- non dare per scontato che sia già chiaro solo perché compare nella traccia. Questo non abbassa il rigore tecnico: aggiungi il gradino mancante, non semplificare il contenuto.
 - Struttura: prima il RAGIONAMENTO (perché si risolve così, quale concetto si applica), poi i PASSI in ordine, infine il RISULTATO finale se l'esercizio ne ha uno.
+- Apri OGNI paragrafo/punto con un'etichetta tra parentesi quadre maiuscola, stessa convenzione dei riassunti: "[RAGIONAMENTO]" per il perché, "[PASSO]" per ciascun passo (numera i passi nel testo del punto, es. "[PASSO] 1. ..."), "[FORMULA]" quando introduci una formula chiave, "[RISULTATO]" per l'esito finale, "[ATTENZIONE]" per un errore comune in cui si cade facilmente su questo tipo di esercizio -- mai più di un'etichetta per punto, sempre almeno una per punto (nessun paragrafo senza etichetta).
 - Paragrafi brevi, elenchi puntati per i passi, **grassetto** sul concetto chiave di ogni passo -- stessa cura di un riassunto, non un muro di testo.
-- Formule matematiche in LaTeX vero ($...$ inline, $$...$$ isolata), mai a parole.
+- Formule matematiche in LaTeX vero, SEMPRE dentro delimitatori: $...$ per una formula dentro una frase, $$...$$ (apertura e chiusura, mai una sola) per una formula isolata su una riga a sé -- mai testo LaTeX nudo senza $ intorno, verrebbe mostrato illeggibile così com'è.
+- MAI un ambiente LaTeX multi-riga (\\begin{array}, \\begin{algorithm}, \\begin{cases} usato per riscrivere un intero algoritmo riga per riga) per mostrare pseudocodice o una sequenza di passi -- i PASSI numerati qui sopra, in prosa leggibile, servono esattamente a quello. Ogni $$...$$ contiene UNA sola espressione/equazione breve, mai un blocco di più righe.
+${MERMAID_FIGURE_RULE}
+${CHOICE_RULE}
+${PLACE_VALUE_RULE}
 - Testo semplice (nessun JSON), niente introduzioni tipo "Ecco la soluzione".`
 
 export async function generateCheatStudySolution(exerciseTitle: string, exerciseText: string, studyContext: string | null, skillContext?: string): Promise<string> {
@@ -660,8 +704,12 @@ const EQUIVALENT_EXERCISE_PROMPT = `Crei un esercizio NUOVO ed EQUIVALENTE a un 
 Regole, IMPORTANTI:
 {{GROUNDING_NOTE}}
 - L'esercizio nuovo deve: stesso concetto/competenza richiesta, difficoltà comparabile, struttura analoga -- MAI una copia o una banale riformulazione dell'originale (cambia i dati/il contesto/i numeri).
-- Genera anche la soluzione del nuovo esercizio, sotto un titolo "## Soluzione" separato -- così ci si può allenare prima di guardarla.
-- Formule matematiche in LaTeX vero ($...$ inline, $$...$$ isolata), mai a parole.
+- Genera anche la soluzione del nuovo esercizio, sotto un titolo "## Soluzione" separato -- così ci si può allenare prima di guardarla. Nella soluzione, stessa convenzione a etichette dei riassunti: apri ogni punto con "[RAGIONAMENTO]", "[PASSO]" (numerato), "[FORMULA]" o "[RISULTATO]" -- mai un punto senza etichetta.
+- Formule matematiche in LaTeX vero, SEMPRE dentro delimitatori: $...$ inline, $$...$$ (apertura e chiusura) isolata -- mai testo LaTeX nudo senza $ intorno, verrebbe mostrato illeggibile così com'è.
+- MAI un ambiente LaTeX multi-riga (\\begin{array}, \\begin{algorithm}, \\begin{cases} usato per riscrivere un intero algoritmo riga per riga) per mostrare pseudocodice -- i PASSI numerati, in prosa leggibile, servono esattamente a quello. Ogni $$...$$ contiene UNA sola espressione/equazione breve.
+${MERMAID_FIGURE_RULE}
+${CHOICE_RULE}
+${PLACE_VALUE_RULE}
 - Testo semplice (nessun JSON), niente introduzioni tipo "Ecco l'esercizio".`
 
 export async function generateEquivalentExercise(exerciseTitle: string, exerciseText: string, studyContext: string | null, skillContext?: string): Promise<string> {
@@ -673,6 +721,43 @@ export async function generateEquivalentExercise(exerciseTitle: string, exercise
     ? `Esercizio originale: ${exerciseTitle}\n\nTesto:\n${exerciseText.slice(0, 6000)}\n\nMateriale di studio reale collegato a questo argomento:\n${studyContext!.slice(0, 15000)}`
     : `Esercizio originale: ${exerciseTitle}\n\nTesto:\n${exerciseText.slice(0, 6000)}`
   const prompt_ = EQUIVALENT_EXERCISE_PROMPT.replace('{{GROUNDING_NOTE}}', grounded ? GROUNDED_NOTE : UNGROUNDED_NOTE)
+  const result = await generateWithFallback(key, { systemInstruction: withSkillContext(prompt_, skillContext) }, (model) => model.generateContent(prompt))
+  return result.response.text().trim()
+}
+
+// Third Cheat Study output (2026-08-26, real user request: "ti crea gli
+// esercizi base per arrivare a svolgere l'esercizio proposto... partire
+// dalle piccole cose, adatto a persone con ADHD"). Not a rewording of the
+// same exercise (that's generateEquivalentExercise already) -- a genuine
+// difficulty LADDER: 2-4 smaller exercises that isolate and drill the
+// sub-skills the real exercise needs, easiest first, so the first one is
+// almost trivial (same "primo passo facilissimo per rompere il blocco
+// iniziale" principle already in SYSTEM_PROMPT for task breakdown -- this is
+// that same idea applied to exam prep instead of a todo list). Plain
+// markdown text, same "## Esercizio base N" + [LABEL] shape as the sibling
+// outputs -- rendered by the same CheatStudySteps component in CheatStudy.tsx,
+// each mini-exercise its own step so this never becomes another wall of text.
+const PREREQ_EXERCISES_PROMPT = `Scomponi un esercizio d'esame in una SCALA di 2-4 esercizi più piccoli e progressivamente più difficili, per una persona con ADHD che si blocca davanti all'esercizio intero -- l'obiettivo è farla partire da qualcosa di facilissimo, non semplificare l'esercizio vero.
+Regole, IMPORTANTI:
+{{GROUNDING_NOTE}}
+- Ogni esercizio della scala isola UNA sotto-abilità reale che serve per risolvere l'esercizio finale (es. se l'esercizio finale richiede inserire valori in un albero e poi visitarlo, il primo esercizio della scala può essere "visita questo albero già pronto", il secondo "inserisci questi 2 valori in un albero di 1 nodo") -- non una versione più corta dello stesso esercizio, un mattoncino verso di esso.
+- Il PRIMO esercizio della scala deve essere quasi banale -- risolvibile in meno di un minuto, zero ambiguità -- per rompere il blocco iniziale. Ogni esercizio successivo aggiunge UNA sola difficoltà in più rispetto al precedente, mai un salto grande. L'ULTIMO esercizio della scala deve avvicinarsi molto (ma non essere identico) all'esercizio reale.
+- Formato per ciascuno, in ordine: "## Esercizio base N" (N=1,2,3...) come titolo, poi il testo dell'esercizio (breve, 1-3 frasi), poi la soluzione -- o come "[SOLUZIONE] " seguito da 1-3 frasi (breve apposta -- scaldamento veloce, non spiegazioni complete come per l'esercizio vero), OPPURE, se l'esercizio è naturalmente a scelta multipla, con il blocco "[SCELTA]"/"[RISPOSTA]" descritto sotto invece di "[SOLUZIONE]".
+- Formule matematiche in LaTeX vero dentro delimitatori ($...$, $$...$$) quando servono -- mai testo LaTeX nudo.
+${CHOICE_RULE}
+${PLACE_VALUE_RULE}
+- VAI DRITTO al primo "## Esercizio base 1" subito dopo l'eventuale riga di dichiarazione -- MAI un'introduzione, un glossario, o un elenco di "concetti chiave" prima della scala: il primo esercizio facile E' il gradino iniziale, non serve un altro gradino prima di lui. MAI separatori "---" o simili tra un esercizio e il successivo -- il titolo "## Esercizio base N" del prossimo separa già visivamente.
+- Testo semplice (nessun JSON), niente introduzioni tipo "Ecco la scala di esercizi".`
+
+export async function generatePrerequisiteExercises(exerciseTitle: string, exerciseText: string, studyContext: string | null, skillContext?: string): Promise<string> {
+  const key = getGeminiKey()
+  if (!key) throw new Error('missing_key')
+
+  const grounded = Boolean(studyContext?.trim())
+  const prompt = grounded
+    ? `Esercizio: ${exerciseTitle}\n\nTesto dell'esercizio:\n${exerciseText.slice(0, 6000)}\n\nMateriale di studio reale trovato per questo argomento:\n${studyContext!.slice(0, 15000)}`
+    : `Esercizio: ${exerciseTitle}\n\nTesto dell'esercizio:\n${exerciseText.slice(0, 6000)}`
+  const prompt_ = PREREQ_EXERCISES_PROMPT.replace('{{GROUNDING_NOTE}}', grounded ? GROUNDED_NOTE : UNGROUNDED_NOTE)
   const result = await generateWithFallback(key, { systemInstruction: withSkillContext(prompt_, skillContext) }, (model) => model.generateContent(prompt))
   return result.response.text().trim()
 }

@@ -45,6 +45,13 @@ alter table materials add column if not exists area_of_interest text;
 -- material, opt-in session config -- see types.ts's Material.cheatStudyLinkedMaterialIds.
 alter table materials add column if not exists cheat_study_linked_ids uuid[];
 alter table materials add column if not exists file_updated_at timestamptz;
+-- Cheat Study (2026-08-26, real user correction: "le tracce di esame NON
+-- devono essere messe in materiale, non c'entrano un cazzo... dovrebbe
+-- essere una cosa a parte"). True for a file uploaded through Cheat Study's
+-- own dropzone -- see types.ts's Material.isExamPaper for the full
+-- rationale (same storage/caching path as any other material, only the
+-- surfacing in Materiali/Flashcards/Riassunti's pickers changes).
+alter table materials add column if not exists is_exam_paper boolean;
 
 create table if not exists tasks (
   id uuid primary key,
@@ -300,6 +307,22 @@ create table if not exists cheat_study_exercises (
   updated_at timestamptz not null default now()
 );
 
+-- Third sibling table (2026-08-26, real user request: "ti crea gli esercizi
+-- base per arrivare a svolgere l'esercizio proposto... partire dalle piccole
+-- cose, adatto a persone con ADHD") -- same shape/scoping triple again,
+-- content is markdown text (same "## Esercizio base N" + [LABEL] convention
+-- as solutions/exercises), not a separate JSON structure.
+create table if not exists cheat_study_prereqs (
+  id uuid primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  exam_material_id uuid not null references materials(id) on delete cascade,
+  chapter_id uuid references material_chapters(id) on delete set null,
+  section_id uuid,
+  content text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 -- Correzioni visive di testo sul PDF ("modifica testo", 2026-08-20) -- NON
 -- riscrive il file PDF: copre il testo originale con un rettangolo e disegna
 -- la sostituzione sopra al momento del rendering. Vedi TextEdit in types.ts
@@ -342,6 +365,7 @@ alter table summaries enable row level security;
 alter table text_edits enable row level security;
 alter table cheat_study_solutions enable row level security;
 alter table cheat_study_exercises enable row level security;
+alter table cheat_study_prereqs enable row level security;
 
 -- drop-if-exists prima di ogni create policy: questo file è pensato per
 -- essere rieseguibile su un progetto che ha già parte delle tabelle (2026-08-20,
@@ -374,7 +398,10 @@ create policy "own rows" on flashcards for all using (auth.uid() = user_id) with
 drop policy if exists "own rows" on summaries;
 create policy "own rows" on summaries for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "own rows" on cheat_study_solutions for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+drop policy if exists "own rows" on cheat_study_exercises;
 create policy "own rows" on cheat_study_exercises for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+drop policy if exists "own rows" on cheat_study_prereqs;
+create policy "own rows" on cheat_study_prereqs for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 drop policy if exists "own rows" on text_edits;
 create policy "own rows" on text_edits for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 

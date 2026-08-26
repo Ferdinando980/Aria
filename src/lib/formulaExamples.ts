@@ -231,9 +231,22 @@ export interface FormulaExampleResult {
   family: FormulaFamily
   params?: RecurrenceParams // only present when family === 'divide_conquer_recurrence'
   verification?: RecurrenceVerification // only present when params is present
+  /** Fallback content for every family WITHOUT a real numeric gate
+   * (2026-08-26, real user report: this panel only ever produced content
+   * for divide-and-conquer recurrences -- any other course's formulas
+   * always hit the bare "non verificato" message and never showed an
+   * actual example, making the button useless outside one algorithms
+   * pilot). A worked example with concrete numbers plugged in, written by
+   * the model -- explicitly NOT run through a real computed check (there is
+   * no general-purpose numeric verifier here), so the UI must always label
+   * it as unverified, never upgrade it to look like a passed Gate 1. */
+  genericExample?: string
 }
 
-const FORMULA_EXAMPLE_PROMPT = `Analizzi una formula matematica presa da un riassunto di studio di algoritmi. Il tuo compito è SOLO classificarla e, se è una ricorrenza divide-et-impera (forma T(n) = a*T(n/b) + f(n)), estrarne i parametri strutturati -- MAI dichiarare tu stesso se l'esempio è corretto, quello lo verifica un calcolo reale dopo, non tu.
+const FORMULA_EXAMPLE_PROMPT = `Analizzi una formula matematica presa da un riassunto di studio. Il tuo compito è classificarla e produrre un esempio numerico concreto.
+
+Se è una ricorrenza divide-et-impera (forma T(n) = a*T(n/b) + f(n)), estrarne i parametri strutturati -- MAI dichiarare tu stesso se l'esempio è corretto, quello lo verifica un calcolo reale dopo, non tu.
+Per QUALUNQUE ALTRA formula (algebrica, fisica, statistica, ecc.), scrivi comunque un breve esempio numerico che applica la formula con valori concreti e mostra il risultato passo-passo -- non lasciare il campo vuoto solo perché non è una ricorrenza. Ometti "genericExample" SOLO se la formula è davvero troppo ambigua/incompleta per inventare valori sensati.
 
 Rispondi SOLO con un oggetto JSON, nessun testo fuori dal JSON, in questa forma esatta:
 {
@@ -246,9 +259,11 @@ Rispondi SOLO con un oggetto JSON, nessun testo fuori dal JSON, in questa forma 
     "context": "<breve scenario concreto per un esempio numerico, es. 'MergeSort su un array di interi'>",
     "declaredCase": <1, 2, o 3, solo se il Master Theorem classico si applica>,
     "declaredComplexity": { "order": ..., "polynomialDegree": ..., "hasLogFactor": ... }
-  }
+  },
+  "genericExample": "<esempio numerico concreto con valori plausibili e passaggi, 3-6 righe di testo semplice, SOLO se family NON è divide_conquer_recurrence>"
 }
-Se family NON è "divide_conquer_recurrence", ometti "params" del tutto.
+Se family NON è "divide_conquer_recurrence", ometti "params" del tutto e valorizza SEMPRE "genericExample" quando possibile.
+Se family è "divide_conquer_recurrence", ometti "genericExample" (l'esempio verrà calcolato da un motore reale, non serve il tuo).
 Se a/b non sono determinabili dalla formula con sicurezza, usa family "other" invece di indovinare.`
 
 /** Discard log, same shape/spirit as a skill REJECTED event (2026-08-24) --
@@ -285,7 +300,7 @@ export async function generateFormulaExample(formulaLatex: string, surroundingCo
   )
   const text = raw.response.text().trim()
 
-  let parsed: { family?: string; params?: Record<string, unknown> }
+  let parsed: { family?: string; params?: Record<string, unknown>; genericExample?: string }
   try {
     parsed = JSON.parse(text)
   } catch {
@@ -293,9 +308,13 @@ export async function generateFormulaExample(formulaLatex: string, surroundingCo
   }
 
   const family: FormulaFamily = parsed.family === 'divide_conquer_recurrence' ? 'divide_conquer_recurrence' : parsed.family === 'graph_complexity' ? 'graph_complexity' : parsed.family === 'np_reduction' ? 'np_reduction' : 'other'
+  const genericExample = typeof parsed.genericExample === 'string' && parsed.genericExample.trim() ? parsed.genericExample.trim() : undefined
 
   if (family !== 'divide_conquer_recurrence' || !parsed.params) {
-    return { result: { family }, attempt: { id: attemptId, ts: now, family, gate1Pass: null, reason: FAMILY_HAS_NUMERIC_GATE[family] ? 'nessun parametro estratto' : 'famiglia senza verifica numerica disponibile' } }
+    return {
+      result: { family, genericExample },
+      attempt: { id: attemptId, ts: now, family, gate1Pass: null, reason: FAMILY_HAS_NUMERIC_GATE[family] ? 'nessun parametro estratto' : 'famiglia senza verifica numerica disponibile' },
+    }
   }
 
   const p = parsed.params as Partial<RecurrenceParams>

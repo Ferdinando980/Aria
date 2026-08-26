@@ -21,6 +21,7 @@ import type {
   MaterialSummary,
   CheatStudySolution,
   CheatStudyExercise,
+  CheatStudyPrereqSet,
   TextEdit,
 } from '../lib/types'
 import { XP_PER_LEVEL } from '../lib/types'
@@ -103,6 +104,7 @@ interface AppState {
   textEdits: TextEdit[]
   cheatStudySolutions: CheatStudySolution[]
   cheatStudyExercises: CheatStudyExercise[]
+  cheatStudyPrereqs: CheatStudyPrereqSet[]
 
   setCurrentUserId: (id: string | undefined) => void
   markLocalDataPushed: (userId: string) => void
@@ -128,6 +130,7 @@ interface AppState {
     textEdits?: any[]
     cheatStudySolutions?: any[]
     cheatStudyExercises?: any[]
+    cheatStudyPrereqs?: any[]
   }) => void
 
   /** Return also reports how many previously-archived skills this Subject's
@@ -239,6 +242,8 @@ interface AppState {
   removeCheatStudySolution: (id: string) => void
   setCheatStudyExercise: (examMaterialId: string, chapterId: string, sectionId: string | undefined, content: string) => void
   removeCheatStudyExercise: (id: string) => void
+  setCheatStudyPrereq: (examMaterialId: string, chapterId: string, sectionId: string | undefined, content: string) => void
+  removeCheatStudyPrereq: (id: string) => void
   setCheatStudyLinkedMaterials: (examMaterialId: string, linkedMaterialIds: string[]) => void
 
   // Text edits ("modifica testo" overlay) -- upserts by matching an existing
@@ -370,6 +375,7 @@ export const useAppStore = create<AppState>()(
       summaries: [],
       cheatStudySolutions: [],
       cheatStudyExercises: [],
+      cheatStudyPrereqs: [],
       textEdits: [],
 
       setCurrentUserId: (id) => set({ currentUserId: id }),
@@ -469,6 +475,7 @@ export const useAppStore = create<AppState>()(
               areaOfInterest: r.area_of_interest ?? undefined,
               createdAt: r.created_at,
               cheatStudyLinkedMaterialIds: r.cheat_study_linked_ids ?? undefined,
+              isExamPaper: r.is_exam_paper ?? undefined,
             }
             if (material.areaOfInterest) {
               byArchivedMat.set(r.id, material)
@@ -673,6 +680,19 @@ export const useAppStore = create<AppState>()(
             })
           }
 
+          const byCheatStudyPrereq = new Map(state.cheatStudyPrereqs.map((s) => [s.id, s]))
+          for (const r of data.cheatStudyPrereqs ?? []) {
+            byCheatStudyPrereq.set(r.id, {
+              id: r.id,
+              examMaterialId: r.exam_material_id,
+              chapterId: r.chapter_id,
+              sectionId: r.section_id ?? undefined,
+              content: r.content,
+              createdAt: r.created_at,
+              updatedAt: r.updated_at,
+            })
+          }
+
           const byTextEdit = new Map(state.textEdits.map((t) => [t.id, t]))
           for (const r of data.textEdits ?? []) {
             byTextEdit.set(r.id, {
@@ -762,6 +782,7 @@ export const useAppStore = create<AppState>()(
             summaries: pruneDeleted(Array.from(bySummary.values()), new Set((data.summaries ?? []).map((r) => r.id))),
             cheatStudySolutions: pruneDeleted(Array.from(byCheatStudySolution.values()), new Set((data.cheatStudySolutions ?? []).map((r) => r.id))),
             cheatStudyExercises: pruneDeleted(Array.from(byCheatStudyExercise.values()), new Set((data.cheatStudyExercises ?? []).map((r) => r.id))),
+            cheatStudyPrereqs: pruneDeleted(Array.from(byCheatStudyPrereq.values()), new Set((data.cheatStudyPrereqs ?? []).map((r) => r.id))),
             textEdits: pruneDeleted(Array.from(byTextEdit.values()), new Set((data.textEdits ?? []).map((r) => r.id))),
           }
         })
@@ -872,6 +893,7 @@ export const useAppStore = create<AppState>()(
               ai_notes: m.aiNotes,
               annotation_data_url: m.annotations ? JSON.stringify(m.annotations) : null,
               area_of_interest: m.areaOfInterest,
+              is_exam_paper: m.isExamPaper ?? null,
             })
           }
           for (const sk of newlyArchivedSkills) {
@@ -917,6 +939,7 @@ export const useAppStore = create<AppState>()(
             annotation_data_url: material.annotations ? JSON.stringify(material.annotations) : null,
             area_of_interest: material.areaOfInterest,
             cheat_study_linked_ids: material.cheatStudyLinkedMaterialIds ?? null,
+            is_exam_paper: material.isExamPaper ?? null,
           })
         return material
       },
@@ -940,6 +963,7 @@ export const useAppStore = create<AppState>()(
             annotation_data_url: material.annotations ? JSON.stringify(material.annotations) : null,
             area_of_interest: material.areaOfInterest,
             cheat_study_linked_ids: material.cheatStudyLinkedMaterialIds ?? null,
+            is_exam_paper: material.isExamPaper ?? null,
           })
       },
       removeMaterial: (id) => {
@@ -963,6 +987,7 @@ export const useAppStore = create<AppState>()(
         // reasoning as summaries/flashcards above.
         const removedCheatStudySolutions = get().cheatStudySolutions.filter((c) => c.examMaterialId === id)
         const removedCheatStudyExercises = get().cheatStudyExercises.filter((c) => c.examMaterialId === id)
+        const removedCheatStudyPrereqs = get().cheatStudyPrereqs.filter((c) => c.examMaterialId === id)
         const removedChapters = get().chapters.filter((c) => c.materialId === id)
         const removedHighlights = get().highlights.filter((h) => h.materialId === id)
         const removedTextEdits = get().textEdits.filter((t) => t.materialId === id)
@@ -981,6 +1006,7 @@ export const useAppStore = create<AppState>()(
             summaries: s.summaries.filter((x) => x.materialId !== id),
             cheatStudySolutions: s.cheatStudySolutions.filter((x) => x.examMaterialId !== id),
             cheatStudyExercises: s.cheatStudyExercises.filter((x) => x.examMaterialId !== id),
+            cheatStudyPrereqs: s.cheatStudyPrereqs.filter((x) => x.examMaterialId !== id),
             chapters: s.chapters.filter((c) => c.materialId !== id),
             highlights: s.highlights.filter((h) => h.materialId !== id),
             textEdits: s.textEdits.filter((t) => t.materialId !== id),
@@ -995,6 +1021,7 @@ export const useAppStore = create<AppState>()(
           for (const sm of removedSummaries) syncDelete('summaries', u, sm.id)
           for (const cs of removedCheatStudySolutions) syncDelete('cheat_study_solutions', u, cs.id)
           for (const ce of removedCheatStudyExercises) syncDelete('cheat_study_exercises', u, ce.id)
+          for (const cp of removedCheatStudyPrereqs) syncDelete('cheat_study_prereqs', u, cp.id)
           for (const c of removedChapters) syncDelete('material_chapters', u, c.id)
           for (const h of removedHighlights) syncDelete('material_highlights', u, h.id)
           for (const t of removedTextEdits) syncDelete('text_edits', u, t.id)
@@ -1391,9 +1418,26 @@ export const useAppStore = create<AppState>()(
       },
 
       ensureSkillsInitialized: () => {
-        if (get().skillsInitialized) return
+        // Tops up any seed skill missing by id, EVERY load, not just once
+        // (2026-08-26, real gap found while adding a new cheat_study seed):
+        // the `skillsInitialized` early-return below used to skip this
+        // entire function for any account already past its first-ever run,
+        // so a seed added to seedSkills() LATER (after that account already
+        // initialized) would never reach it -- same class of problem as a
+        // new domain/status value added after a CHECK constraint was already
+        // deployed (see CLAUDE.md). Cheap and idempotent once every seed
+        // exists (empty diff), same "self-heal on every load" pattern as
+        // librarianEnabled/researchConsent in App.tsx. Uses addSkill() so a
+        // newly-added seed actually syncs to Supabase too -- the ORIGINAL
+        // one-time seeding below never did (raw `set()`, no syncUpsert),
+        // which is fine for content only ever read locally on this one
+        // account/device, but would silently strand a seed that should be
+        // there on every device.
         const existingIds = new Set(get().skills.map((s) => s.id))
-        const seeds = seedSkills().filter((s) => !existingIds.has(s.id))
+        const missingSeeds = seedSkills().filter((s) => !existingIds.has(s.id))
+        for (const seed of missingSeeds) get().addSkill(seed)
+
+        if (get().skillsInitialized) return
 
         // Migrate the two legacy single-purpose memory fields into the
         // unified skill shape (not deleted from their old fields — kept
@@ -1437,7 +1481,9 @@ export const useAppStore = create<AppState>()(
           })
         }
 
-        set((s) => ({ skills: [...s.skills, ...seeds, ...migrated], skillsInitialized: true }))
+        // Seeds were already added above via addSkill() -- only the
+        // one-time legacy migration goes into this final set().
+        set((s) => ({ skills: [...s.skills, ...migrated], skillsInitialized: true }))
       },
 
       setLibrarianEnabled: (on) => set({ librarianEnabled: on }),
@@ -1753,6 +1799,30 @@ export const useAppStore = create<AppState>()(
         const u = get().currentUserId
         if (canSync(u)) syncDelete('cheat_study_exercises', u, id)
       },
+
+      setCheatStudyPrereq: (examMaterialId, chapterId, sectionId, content) => {
+        const now = nowIso()
+        const existing = get().cheatStudyPrereqs.find((s) => s.examMaterialId === examMaterialId && s.chapterId === chapterId && s.sectionId === sectionId)
+        const prereq: CheatStudyPrereqSet = existing
+          ? { ...existing, content, updatedAt: now }
+          : { id: uid(), examMaterialId, chapterId, sectionId, content, createdAt: now, updatedAt: now }
+        set((s) => ({ cheatStudyPrereqs: [...s.cheatStudyPrereqs.filter((x) => x.id !== prereq.id), prereq] }))
+        const u = get().currentUserId
+        if (canSync(u))
+          syncUpsert('cheat_study_prereqs', u, {
+            id: prereq.id,
+            exam_material_id: prereq.examMaterialId,
+            chapter_id: prereq.chapterId,
+            section_id: prereq.sectionId,
+            content: prereq.content,
+          })
+      },
+      removeCheatStudyPrereq: (id) => {
+        set((s) => ({ cheatStudyPrereqs: s.cheatStudyPrereqs.filter((x) => x.id !== id) }))
+        const u = get().currentUserId
+        if (canSync(u)) syncDelete('cheat_study_prereqs', u, id)
+      },
+
       setCheatStudyLinkedMaterials: (examMaterialId, linkedMaterialIds) => {
         get().updateMaterial(examMaterialId, { cheatStudyLinkedMaterialIds: linkedMaterialIds })
       },
@@ -1813,6 +1883,7 @@ export const useAppStore = create<AppState>()(
         summaries: s.summaries,
         cheatStudySolutions: s.cheatStudySolutions,
         cheatStudyExercises: s.cheatStudyExercises,
+        cheatStudyPrereqs: s.cheatStudyPrereqs,
         textEdits: s.textEdits,
       }),
     },

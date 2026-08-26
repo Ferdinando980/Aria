@@ -60,6 +60,21 @@ export interface Material {
    * never a full-text/online search. Undefined or empty = no material
    * linked, generation falls back to plain Gemini with no grounding. */
   cheatStudyLinkedMaterialIds?: string[]
+  /** True for a file uploaded through Cheat Study's own "traccia d'esame"
+   * dropzone (2026-08-26, real user correction: "le tracce di esame NON
+   * devono essere messe in materiale, non c'entrano un cazzo... dovrebbe
+   * essere una cosa a parte"). Before this flag, an uploaded exam paper was
+   * a plain `Material` indistinguishable from real study material -- it
+   * leaked into Materiali's browsing grid and into every other page's
+   * material picker (Flashcards, Riassunti), mixed in with the user's
+   * actual study files. Still stored and cached through the exact same
+   * infrastructure as any other Material (Supabase Storage/IndexedDB blob
+   * cache, so a traccia persists and reopens instantly later, same as
+   * anything else) -- ONLY the surfacing changes: Materiali/Flashcards/
+   * Riassunti/Piano di studio's material lists all filter this OUT, and
+   * Cheat Study's own "riprendi una traccia già caricata" list filters FOR
+   * it. A study material never has this set; there is no in-between. */
+  isExamPaper?: boolean
 }
 
 /**
@@ -227,6 +242,25 @@ export interface CheatStudyExercise {
   updatedAt: string
 }
 
+/** Third sibling output (2026-08-26, real user request: "ti crea gli
+ * esercizi base per arrivare a svolgere l'esercizio proposto... partire
+ * dalle piccole cose, adatto a persone con ADHD") -- a ladder of small
+ * warm-up exercises leading up to the real one, same "small steps, first
+ * one trivial" principle already applied to task breakdown (see
+ * SYSTEM_PROMPT in gemini.ts). Same shape/scoping as CheatStudySolution/
+ * CheatStudyExercise on purpose -- content is markdown text using the same
+ * "## Esercizio base N" + [LABEL] conventions, rendered by the same
+ * CheatStudySteps component, not a separate JSON structure. */
+export interface CheatStudyPrereqSet {
+  id: ID
+  examMaterialId: ID
+  chapterId: ID
+  sectionId?: ID
+  content: string
+  createdAt: string
+  updatedAt: string
+}
+
 export interface SubTask {
   id: ID
   title: string
@@ -250,12 +284,15 @@ export interface Task {
   /** Real page range (from the source MaterialChapter/ChapterSection this
    * task's study-plan step was generated from), 2026-08-24, real user
    * request: "vorrei che dividesse il numero di pagine da studiare... oggi
-   * ho fatto 10-15 pagine, domani 20-25". Same range for every step of the
-   * same chapter -- not sliced further per step, since a step doesn't map
-   * to a specific sub-range of its own chapter's pages. Undefined for a
-   * task whose source chapter has no detected page range yet (a material
-   * with no "Rileva capitoli" run) -- no page badge shown rather than a
-   * fabricated one. See StudyPlanPanel/MaterialPlanPanel's generate(). */
+   * ho fatto 10-15 pagine, domani 20-25". A SUB-range of the chapter's own
+   * pages, one per step (2026-08-26, follow-up user correction: "le task
+   * devono essere divise su pagine... tipo pagine 2-5 6-8" -- the first cut
+   * of this feature gave every step of a chapter the identical whole-chapter
+   * range, which didn't actually tell the user which pages to read on which
+   * day). See utils.ts's splitPageRange. Undefined for a task whose source
+   * chapter has no detected page range yet (a material with no "Rileva
+   * capitoli" run) -- no page badge shown rather than a fabricated one. See
+   * StudyPlanPanel/MaterialPlanPanel's generate(). */
   pageRange?: { start: number; end: number }
 }
 
@@ -327,9 +364,9 @@ export interface StudyPlanItem {
    * completion back onto the item with this id; reassignOverdueStudyPlanItems
    * moves the linked task's own dueDate along with the item's. */
   taskId?: ID
-  /** Same as Task.pageRange, mirrored here so the plan panel itself can show
-   * it without looking up the linked task (2026-08-24). See Task.pageRange
-   * for the full rationale. */
+  /** Same as Task.pageRange (a per-STEP sub-range, not the whole chapter's
+   * pages -- see its comment), mirrored here so the plan panel itself can
+   * show it without looking up the linked task (2026-08-24). */
   pageRange?: { start: number; end: number }
 }
 

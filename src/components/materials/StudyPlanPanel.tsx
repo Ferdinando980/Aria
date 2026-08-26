@@ -7,7 +7,7 @@ import { Link } from 'react-router-dom'
 import { useToastStore } from '../../store/toastStore'
 import { generateStudyPlan, reflectOnStudyPlan, hasGeminiKey, GEMINI_MODEL } from '../../lib/gemini'
 import { buildStudyPlanChapterInputs } from '../../lib/materialContent'
-import { uid, cn, daysUntilNextExam, nextExamEvent, distributeByWeight, chapterPageRange } from '../../lib/utils'
+import { uid, cn, daysUntilNextExam, nextExamEvent, distributeByWeight, chapterPageRange, splitPageRange } from '../../lib/utils'
 import { routeSkills, skillsAsPromptContext, tagsFromText, STUDY_PLAN_TASK_TAGS } from '../../lib/skills'
 import { enforceSkillBudget } from '../../lib/contextBudget'
 import { MarkdownLite } from '../shared/MarkdownLite'
@@ -169,7 +169,7 @@ export function StudyPlanPanel({
             id: uid(),
             title: c.title,
             summary: c.summary,
-            items: c.steps.map((title) => {
+            items: c.steps.map((title, stepIndex) => {
               const dueDate = dueDates[stepCursor]
               stepCursor++
               const prior = priorByTitle.get(title.trim().toLowerCase())
@@ -181,11 +181,15 @@ export function StudyPlanPanel({
               // by title, same continuity trick as `done`/`addedAsTask`
               // just below) instead of creating a duplicate every time.
               let taskId = prior?.taskId
+              // Sub-range of the chapter's pages for THIS step (2026-08-26,
+              // see splitPageRange) -- not the whole chapter range repeated
+              // on every step.
+              const itemPageRange = pageRange ? splitPageRange(pageRange, stepIndex, c.steps.length) : undefined
               if (dueDate) {
-                if (taskId) updateTask(taskId, { title, dueDate, estimateMinutes: perStep, subjectId: subject.id, pageRange })
-                else taskId = addTask({ subjectId: subject.id, title, dueDate, estimateMinutes: perStep, priority: 'media', pageRange }).id
+                if (taskId) updateTask(taskId, { title, dueDate, estimateMinutes: perStep, subjectId: subject.id, pageRange: itemPageRange })
+                else taskId = addTask({ subjectId: subject.id, title, dueDate, estimateMinutes: perStep, priority: 'media', pageRange: itemPageRange }).id
               }
-              return { id: uid(), title, done: prior?.done ?? false, addedAsTask: prior?.addedAsTask ?? !!taskId, dueDate, taskId, pageRange }
+              return { id: uid(), title, done: prior?.done ?? false, addedAsTask: prior?.addedAsTask ?? !!taskId, dueDate, taskId, pageRange: itemPageRange }
             }),
             quiz: c.quiz.map((question) => ({ id: uid(), question })),
             materialChapterId: c.materialChapterId,
@@ -373,6 +377,11 @@ export function StudyPlanPanel({
                           {item.done && <Check size={11} className="text-[var(--color-bg)]" />}
                         </button>
                         <span className={cn('min-w-0 flex-1 text-sm', item.done && 'text-[var(--color-ink-muted)] line-through')}>{item.title}</span>
+                        {item.pageRange && (
+                          <span className="shrink-0 rounded-full bg-[var(--color-surface)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-ink-muted)]">
+                            p. {item.pageRange.start}–{item.pageRange.end}
+                          </span>
+                        )}
                         {!item.done && item.dueDate && item.dueDate < new Date().toISOString().slice(0, 10) && (
                           <span className="shrink-0 text-[11px] text-[var(--color-warn)]">in ritardo</span>
                         )}

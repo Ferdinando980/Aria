@@ -179,6 +179,15 @@ export function tagsFromText(...texts: (string | undefined)[]): string[] {
 // the subject-specific part.
 export const STUDY_PLAN_TASK_TAGS = ['piano', 'capitolo', 'studio', 'materiale']
 
+// Same fix, same reasoning, applied to cheat_study (2026-08-26, real user
+// request: "qui una skill è utile... spiegare come se fosse una persona che
+// non conosce nulla dell'argomento" -- for that skill to ever actually be
+// retrieved, CheatStudy.tsx's prepareSkillCall() needs to route on tags that
+// are ALWAYS present, not just tagsFromText(exerciseTitle) (which varies per
+// exercise and by construction never overlaps a generic explanation-style
+// skill's own tags).
+export const CHEAT_STUDY_TASK_TAGS = ['spiegazione', 'esercizio', 'soluzione', 'traccia']
+
 // ---- seed skills: authored, VERIFIED, generationMethod 'manual' --------
 // A few, deliberately not many — Aria's system prompts (gemini.ts) already
 // carry most generic ADHD-coaching guidance. These seed the domains where
@@ -214,6 +223,15 @@ export function seedSkills(): Skill[] {
       capabilityTags: ['materiale', 'link', 'file', 'contenuto'],
       content:
         "Quando il contenuto reale di un link o file non è disponibile, dichiaralo in una riga breve prima di rispondere in base a quello che l'utente stesso racconta — mai fingere di aver letto qualcosa che non è stato fornito.",
+      ...base,
+    },
+    {
+      id: 'seed_cheat_study_beginner_explanation',
+      title: 'Spiega come a chi non sa nulla dell\'argomento',
+      domain: 'cheat_study',
+      capabilityTags: CHEAT_STUDY_TASK_TAGS,
+      content:
+        'Parti sempre dal presupposto che chi legge non conosce l\'argomento: la prima volta che nomini un termine tecnico (es. "ricorrenza", "grafo", "complessità asintotica"), spiegalo in una frase semplice PRIMA di usarlo per ragionare, non dare per scontato che sia già chiaro solo perché compare nella traccia. Non abbassare il rigore tecnico -- aggiungi il gradino mancante, non semplificare il contenuto.',
       ...base,
     },
   ]

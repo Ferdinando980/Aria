@@ -90,6 +90,14 @@ export async function getMaterialFileBlob(path: string, fileUpdatedAt?: string):
 
 export async function deleteMaterialFile(path: string) {
   if (!supabase) return
-  await supabase.storage.from(BUCKET).remove([path])
+  // Real orphan found live (2026-08-26, user audit via Supabase SQL Editor):
+  // a 21.5MB PDF sat in Storage for a material that had already been hard-
+  // deleted from `materials` -- this call never checked/logged `error` (the
+  // one place in storage.ts that didn't, unlike uploadMaterialFile's own
+  // `console.warn` on failure), so a failed remove (RLS edge case, stale
+  // path, anything) was invisible. Root cause of THAT specific orphan not
+  // fully isolated -- this only makes the NEXT one visible instead of silent.
+  const { error } = await supabase.storage.from(BUCKET).remove([path])
+  if (error) console.warn('[storage] delete failed', path, error)
   await invalidateMaterialFileCache(path)
 }

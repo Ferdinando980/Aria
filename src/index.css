@@ -45,6 +45,40 @@
   color-scheme: dark;
 }
 
+/* Print isolation + forced light colors (2026-08-26, Cheat Study "Scarica
+   PDF" -- real user request). Two independent things: (1) the whole app is
+   dark-only (see @theme above), but a dark background on paper wastes ink
+   and reads badly for ANY page someone prints, not just this one -- correct
+   default everywhere, so it lives here, not scoped to Cheat Study; (2) a
+   structure-agnostic print-target pattern (visibility, not display, so
+   layout position doesn't matter) lets a single element opt in without this
+   file needing to know the app's real DOM shape (Sidebar, layout wrappers,
+   etc.) -- an element wearing #print-area is the only thing that survives
+   print, everything else is invisible but still laid out. */
+@media print {
+  :root {
+    --color-bg: #ffffff;
+    --color-surface: #ffffff;
+    --color-surface-2: #f4f4f4;
+    --color-border: #dddddd;
+    --color-ink: #111111;
+    --color-ink-muted: #555555;
+  }
+  body * {
+    visibility: hidden;
+  }
+  #print-area,
+  #print-area * {
+    visibility: visible;
+  }
+  #print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+}
+
 html {
   /* User request (2026-08-21): "il font mi sembra un po' piccolo". Every
      Tailwind text-* utility in this codebase is rem-based, so bumping the

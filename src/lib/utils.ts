@@ -100,34 +100,50 @@ export function daysUntilNextExam(events: { subjectId?: string; start: string; t
  * this codebase), so guessing weights now would be inventing precision this
  * data can't support. `days` < 1 (exam today/passed) collapses everything
  * onto today rather than producing a negative or empty range. */
-/** Same job as distributeAcrossDays, but bin-packed by real WEIGHT (minutes)
- * instead of raw count (2026-08-24, "difficolta' stimata/densita'
+/** Same job as distributeAcrossDays, but weighted by real WEIGHT (minutes or
+ * pages) instead of raw count (2026-08-24, "difficolta' stimata/densita'
  * concettuale" from the roadmap -- explicit instruction: "usa la difficolta'
- * che credi piu' adatta"). Chosen proxy: the model's own per-chapter DURATA
- * estimate (see gemini.ts's STUDY_PLAN_PROMPT), spread evenly across a
- * chapter's steps -- grounded in content the model actually read, not a
- * client-side guess from page count or word count alone (which conflates
- * "long" with "hard": a long chapter of simple material and a short one
- * dense with formulas would get the same weight from a length-only proxy).
- * Greedy bin-pack: fill each day up to its fair share (total/days) before
- * moving to the next, capped at the last available day so nothing ever
- * lands after the exam. */
+ * che credi piu' adatta"). Chosen proxy: real page count where known
+ * (chapterPageRange), the model's own per-chapter DURATA estimate otherwise
+ * (see gemini.ts's STUDY_PLAN_PROMPT) -- grounded in content the model
+ * actually read, not a client-side guess from page count or word count alone
+ * (which conflates "long" with "hard": a long chapter of simple material and
+ * a short one dense with formulas would get the same weight from a
+ * length-only proxy).
+ *
+ * Placement is PROPORTIONAL to cumulative weight (each step's own midpoint
+ * through the total workload maps to the same fraction through the
+ * available days), not greedy bin-packing (2026-08-26, real bug found live:
+ * "il piano di studio non si spalma nel calendario anche se ho messo una
+ * data di esame"). The original greedy version filled each day up to its
+ * "fair share" (total/days) before moving to the next -- fine when there are
+ * MANY small steps, but for the common case of a handful of steps against a
+ * long runway to the exam (e.g. 6 steps, 29 usable days), the fair share
+ * (total/29) is smaller than almost any single step's weight, so the very
+ * first comparison already overflows it and every step lands on its own
+ * consecutive day starting from TODAY -- all 6 steps crammed into the next
+ * 6 days, days 7-29 left completely empty, which reads as "not spread out"
+ * even though the code never puts two steps on the same day. Proportional
+ * placement fixes this: a step covering, say, the last quarter of the total
+ * workload lands about three-quarters of the way to the exam regardless of
+ * how few total steps there are -- e.g. those same 6 equal-weight steps land
+ * on days [2, 7, 12, 16, 21, 26] of 29, actually spanning the runway.
+ * Multiple steps can still legitimately share a day when there's more
+ * content than days (the reverse case, where greedy bin-packing already
+ * worked fine) -- this is a strict generalization, not a special case. */
 export function distributeByWeight(weights: number[], days: number, startOffsetDays = 0): string[] {
   const usableDays = Math.max(1, days)
   const total = weights.reduce((a, b) => a + b, 0)
-  const perDay = total > 0 ? total / usableDays : 1
   const dates: string[] = []
-  let dayIndex = 0
-  let dayLoad = 0
+  let cumulative = 0
   for (const w of weights) {
-    if (dayLoad > 0 && dayLoad + w > perDay && dayIndex < usableDays - 1) {
-      dayIndex++
-      dayLoad = 0
-    }
+    const midpoint = cumulative + w / 2
+    const fraction = total > 0 ? midpoint / total : 0
+    const dayIndex = Math.min(usableDays - 1, Math.floor(fraction * usableDays))
     const date = new Date()
     date.setDate(date.getDate() + startOffsetDays + dayIndex)
     dates.push(date.toISOString().slice(0, 10))
-    dayLoad += w
+    cumulative += w
   }
   return dates
 }
@@ -154,6 +170,28 @@ export function chapterPageRange(
     if (section) return { start: section.startPage, end: section.endPage }
   }
   return { start: chapter.startPage, end: chapter.endPage }
+}
+
+/** Splits a chapter/section's page range into `count` contiguous
+ * sub-ranges, one per study-plan step (2026-08-26, real user request: "le
+ * task che vengono date nel piano di studio devono essere divise su
+ * pagine... tipo studiare pagine 2-5 6-8"). Before this, every step of a
+ * chapter carried the SAME whole-chapter range (see Task.pageRange's old
+ * comment) -- fine for a one-step chapter, but for "pagine 2-15" split
+ * across 4 daily steps it told the user nothing about which day covers
+ * which pages. Split evenly by page COUNT, not by weight/difficulty (same
+ * "no invented precision" reasoning as distributeAcrossDays), rounded so
+ * ranges stay contiguous and gapless. Degrades to overlapping single-page
+ * ranges when there are more steps than pages -- still better than the old
+ * "same full range for every step" default. */
+export function splitPageRange(pages: { start: number; end: number }, index: number, count: number): { start: number; end: number } {
+  if (count <= 1) return pages
+  const totalPages = pages.end - pages.start + 1
+  const startOffset = Math.round((index / count) * totalPages)
+  const endOffset = Math.round(((index + 1) / count) * totalPages) - 1
+  const start = pages.start + startOffset
+  const end = Math.max(start, pages.start + endOffset)
+  return { start, end }
 }
 
 export function distributeAcrossDays(count: number, days: number, startOffsetDays = 0): string[] {

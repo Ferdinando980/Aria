@@ -7,7 +7,7 @@ import Today from './pages/Today'
 import Settings from './pages/Settings'
 import { useAuthStore } from './store/authStore'
 
-import type { CalendarEvent } from './lib/types'
+import type { CalendarEvent, Material, MaterialChapter } from './lib/types'
 
 const CalendarPage = lazy(() => import('./pages/Calendar'))
 const Materials = lazy(() => import('./pages/Materials'))
@@ -20,6 +20,7 @@ const Game = lazy(() => import('./pages/Game'))
 import { useAppStore } from './store/useAppStore'
 import { syncPullAll, syncPushAll, canSync } from './lib/sync'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
+import { checkForAppUpdate } from './lib/pwaUpdate'
 
 // Self-heal for a SPECIFIC pre-2026-08-21 data artifact (found live
 // 2026-08-24, user report: "vedo uno 0" on a real calendar event). The fix
@@ -45,6 +46,27 @@ function fixLegacyAllDayEvents(events: CalendarEvent[], updateEvent: (id: string
   }
 }
 
+// Self-heal for exam papers uploaded BEFORE Material.isExamPaper existed
+// (2026-08-26, found live checking the user's real data right after
+// shipping the flag: two "WhatsApp Image..." tracce, uploaded via Cheat
+// Study's image path the day before, still showing up in Materiali because
+// they genuinely predate the flag -- not a bug in the new filtering, just
+// data the flag can't retroactively know about on its own). Signature:
+// `MaterialChapter.transcribedText` is set ONLY by CheatStudy.tsx's
+// `generateExercisesFromImage` path (verified: no other call site in the
+// codebase writes it) -- a real study material's chapters never have it,
+// since "Rileva capitoli" on a PDF stores page ranges, not transcribed
+// text. Doesn't cover a legacy PDF traccia (no equivalent reliable
+// signature exists there -- a real study PDF and an old PDF traccia
+// produce identical MaterialChapter shapes) -- those need a manual
+// delete-and-reupload through the fixed flow.
+function backfillLegacyExamPapers(materials: Material[], chapters: MaterialChapter[], updateMaterial: (id: string, patch: Partial<Material>) => void) {
+  const transcribedMaterialIds = new Set(chapters.filter((c) => c.transcribedText !== undefined).map((c) => c.materialId))
+  for (const m of materials) {
+    if (!m.isExamPaper && transcribedMaterialIds.has(m.id)) updateMaterial(m.id, { isExamPaper: true })
+  }
+}
+
 function SyncBootstrap() {
   const init = useAuthStore((s) => s.init)
   const session = useAuthStore((s) => s.session)
@@ -56,6 +78,25 @@ function SyncBootstrap() {
   const updateEvent = useAppStore((s) => s.updateEvent)
 
   useEffect(() => {
+    // Force a real update check on every app open, not just when someone
+    // happens to click "Controlla aggiornamenti" in Impostazioni
+    // (2026-08-26, real user report: a hard refresh alone didn't pick up a
+    // fresh deploy, only manually clearing site data did -- registerType
+    // 'autoUpdate' still needs SOMETHING to actually ask the browser
+    // "has the SW script changed?"; left to itself, Workbox's own lazy
+    // background check can go a long time without firing on a PWA session
+    // that's kept open for days without a real navigation). Re-checked on
+    // every tab focus/visibility return too, not just at mount, for exactly
+    // that "left open for days" case -- catches a deploy that happened
+    // while the app was in the background instead of waiting for the next
+    // full reload.
+    checkForAppUpdate()
+    function onVisible() {
+      if (document.visibilityState === 'visible') checkForAppUpdate()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
+
     if (isSupabaseConfigured) init()
     ensureSkillsInitialized()
 
@@ -78,12 +119,24 @@ function SyncBootstrap() {
     // immediately -- but see the second call site below for why it can't be
     // the only one.
     fixLegacyAllDayEvents(state.events, updateEvent)
+    backfillLegacyExamPapers(state.materials, state.chapters, state.updateMaterial)
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
+    }
   }, [init, ensureSkillsInitialized, updateEvent])
 
   useEffect(() => {
     const userId = session?.user.id
     setCurrentUserId(userId)
     if (!userId) return
+    // Explicit user request (2026-08-26): "non c'è un refresh obbligatorio
+    // che invece penso ci dovrebbe essere ALMENO ogni login" -- a fresh
+    // login can happen well after the app first loaded (someone sitting on
+    // the auth screen while a deploy goes out), so this is a second real
+    // check, not a duplicate of the mount-time one above.
+    checkForAppUpdate()
 
     async function syncUp() {
       const state = useAppStore.getState()
@@ -126,6 +179,7 @@ function SyncBootstrap() {
           summaries: state.summaries,
           cheatStudySolutions: state.cheatStudySolutions,
           cheatStudyExercises: state.cheatStudyExercises,
+          cheatStudyPrereqs: state.cheatStudyPrereqs,
           textEdits: state.textEdits,
         })
         // Only mark done on a FULLY successful push (2026-08-24, prompted by
@@ -152,6 +206,7 @@ function SyncBootstrap() {
       // logged-in account (confirmed live: the first-effect-only version
       // kept reverting on reload, exactly this race).
       fixLegacyAllDayEvents(useAppStore.getState().events, useAppStore.getState().updateEvent)
+      backfillLegacyExamPapers(useAppStore.getState().materials, useAppStore.getState().chapters, useAppStore.getState().updateMaterial)
 
       // One-shot self-heal (2026-08-24) for accounts whose first-login push
       // happened BEFORE this fix existed -- their pushedLocalDataFor is

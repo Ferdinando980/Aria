@@ -103,7 +103,23 @@ export function FormulaExamplePanel({ latex, context }: { latex: string; context
 
   // Family with no numeric verifier at all (2026-08-24, point 5: "vanno
   // etichettate onestamente... non nascoste né spacciate per verificate").
+  // Still shows a real worked example when the model produced one
+  // (2026-08-26, real user report: outside the one algorithms recurrence
+  // pilot, this always showed the bare disclaimer below and never any
+  // actual content -- "esce sempre questo, non generando nessun
+  // esercizio") -- just honestly labeled as unverified rather than upgraded
+  // to look like a passed Gate 1.
   if (!FAMILY_HAS_NUMERIC_GATE[result.family]) {
+    if (result.genericExample) {
+      return (
+        <div className="my-2 rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
+          <p className="flex items-center gap-1.5 text-xs font-medium text-[var(--color-ink-muted)]">
+            <CircleHelp size={13} /> Esempio non verificato numericamente ({FAMILY_LABEL[result.family]})
+          </p>
+          <p className="mt-1.5 whitespace-pre-line text-xs leading-relaxed text-[var(--color-ink)]">{result.genericExample}</p>
+        </div>
+      )
+    }
     return (
       <p className="my-1 flex items-center gap-1.5 text-xs text-[var(--color-ink-muted)]">
         <CircleHelp size={13} /> {FAMILY_LABEL[result.family]}: non verificato a questo livello (nessun controllo numerico disponibile per questa famiglia).
