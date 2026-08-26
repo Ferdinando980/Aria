@@ -22,6 +22,7 @@ import type {
   CheatStudySolution,
   CheatStudyExercise,
   CheatStudyPrereqSet,
+  ExtractedShape,
   TextEdit,
 } from '../lib/types'
 import { XP_PER_LEVEL } from '../lib/types'
@@ -105,6 +106,9 @@ interface AppState {
   cheatStudySolutions: CheatStudySolution[]
   cheatStudyExercises: CheatStudyExercise[]
   cheatStudyPrereqs: CheatStudyPrereqSet[]
+  /** "Forma estratta" per ogni materiale della sezione di addestramento
+   * skill (2026-08-26) -- vedi ExtractedShape in types.ts. */
+  cheatStudyExtractedShapes: ExtractedShape[]
 
   setCurrentUserId: (id: string | undefined) => void
   markLocalDataPushed: (userId: string) => void
@@ -131,6 +135,7 @@ interface AppState {
     cheatStudySolutions?: any[]
     cheatStudyExercises?: any[]
     cheatStudyPrereqs?: any[]
+    cheatStudyExtractedShapes?: any[]
   }) => void
 
   /** Return also reports how many previously-archived skills this Subject's
@@ -194,8 +199,23 @@ interface AppState {
   /** Upserts by id: patches an existing skill, or creates one from `fallback`
    * if it doesn't exist yet (e.g. a material that never had aiNotes before). */
   upsertSkillContent: (id: string, content: string, fallback: Omit<Skill, 'id' | 'content' | 'createdAt' | 'updatedAt'>) => void
-  logSkillCall: (domain: SkillDomain, config: 'F' | 'B', skillIds: string[], model: string) => SkillEvent
-  recordSkillOutcome: (callEvent: SkillEvent, outcome: SkillOutcome) => void
+  logSkillCall: (domain: SkillDomain, config: 'F' | 'B', skillIds: string[], model: string, source?: 'organic' | 'training') => SkillEvent
+  recordSkillOutcome: (callEvent: SkillEvent, outcome: SkillOutcome, source?: 'organic' | 'training') => void
+  /** Hard delete, not archive (2026-08-26, real user request: "lascia la
+   * possibilità all'utente anche di eliminare... queste skill... quelle
+   * personali per se stesso") -- scoped in the UI to PERSONAL_NOTE/DRAFT
+   * skills distilled from the skill-training section (SkillTraining.tsx),
+   * not exposed as a general "delete any skill" action. Different from
+   * archiveSkillsForMaterial's move-not-delete pattern on purpose: those
+   * archive because a material disappearing isn't the user rejecting the
+   * skill's content, this IS that -- an explicit "this note is wrong/not
+   * useful", nothing to preserve for later recognition. */
+  removeSkill: (id: string) => void
+  /** Manual on/off toggle for a personally-distilled skill, independent of
+   * its promotion status (VERIFIED/CROSS_USER_CANDIDATE/...) -- an inactive
+   * skill is skipped by routeSkills()/routeMaterialKnowledge() but keeps its
+   * evidence history, unlike removeSkill's hard delete. */
+  setSkillActive: (id: string, active: boolean) => void
   /** Gate 1 (mathematical correctness, computed) attempts for the formula
    * example feature -- see lib/formulaExamples.ts's module comment for why
    * this is kept separate from skillEvents (a deterministic computed gate,
@@ -238,12 +258,13 @@ interface AppState {
   // instead of piling up.
   setSummary: (materialId: string, chapterId: string, sectionId: string | undefined, content: string) => void
   removeSummary: (id: string) => void
-  setCheatStudySolution: (examMaterialId: string, chapterId: string, sectionId: string | undefined, content: string) => void
+  setCheatStudySolution: (examMaterialId: string, chapterId: string, sectionId: string | undefined, content: string, callEventId?: string) => void
   removeCheatStudySolution: (id: string) => void
-  setCheatStudyExercise: (examMaterialId: string, chapterId: string, sectionId: string | undefined, content: string) => void
+  setCheatStudyExercise: (examMaterialId: string, chapterId: string, sectionId: string | undefined, content: string, callEventId?: string) => void
   removeCheatStudyExercise: (id: string) => void
-  setCheatStudyPrereq: (examMaterialId: string, chapterId: string, sectionId: string | undefined, content: string) => void
+  setCheatStudyPrereq: (examMaterialId: string, chapterId: string, sectionId: string | undefined, content: string, callEventId?: string) => void
   removeCheatStudyPrereq: (id: string) => void
+  setCheatStudyExtractedShape: (materialId: string, shape: Omit<ExtractedShape, 'id' | 'materialId' | 'createdAt'>) => void
   setCheatStudyLinkedMaterials: (examMaterialId: string, linkedMaterialIds: string[]) => void
 
   // Text edits ("modifica testo" overlay) -- upserts by matching an existing
@@ -260,7 +281,7 @@ const defaultProfile: ProfileState = {
   streakCount: 0,
   streakFreezes: 2,
   researchConsent: true, // default flipped 2026-08-20 on explicit user request. A second real account exists now (2026-08-24) and gave blanket verbal consent before using the app -- still holds, but see setSkillSharingConsent below for why SKILL CONTENT sharing is a separate, off-by-default decision, not covered by this flag.
-  skillSharingConsent: false, // opt-in, deliberately off even for accounts that gave researchConsent -- see types.ts's ProfileState comment
+  skillSharingConsent: true, // default flipped 2026-08-26 on explicit user request, now that the cross-user verification pipeline (skills.ts's requiredCrossUserVerifications/cross_user_verification_count) actually exists -- opt-OUT now, same reasoning as researchConsent's own flip: still off-by-default for any account that explicitly turned it off before this change (see the hydrate line below, which only defaults a genuinely unset/null value, never overrides an explicit false).
 }
 
 // `annotation_data_url` is a text column (see supabase/schema.sql) reused as
@@ -376,6 +397,7 @@ export const useAppStore = create<AppState>()(
       cheatStudySolutions: [],
       cheatStudyExercises: [],
       cheatStudyPrereqs: [],
+      cheatStudyExtractedShapes: [],
       textEdits: [],
 
       setCurrentUserId: (id) => set({ currentUserId: id }),
@@ -537,10 +559,12 @@ export const useAppStore = create<AppState>()(
                 // same day: this flag must always read as on.
                 researchConsent: data.profile.research_consent ?? true,
                 researchConsentAt: data.profile.research_consent_at ?? undefined,
-                // Opposite direction from researchConsent on purpose: this
-                // one must stay OFF on a missing/stale remote column (no
-                // migration run yet), never silently default to on.
-                skillSharingConsent: data.profile.skill_sharing_consent ?? false,
+                // Same direction as researchConsent now (2026-08-26, default
+                // flipped once the sharing pipeline actually existed) -- only
+                // a genuinely unset/null column defaults to true here, an
+                // account that already explicitly stored a real `false`
+                // keeps it, this never overrides a deliberate opt-out.
+                skillSharingConsent: data.profile.skill_sharing_consent ?? true,
                 skillSharingConsentAt: data.profile.skill_sharing_consent_at ?? undefined,
               }
             : state.profile
@@ -570,6 +594,8 @@ export const useAppStore = create<AppState>()(
               derivedFrom: r.derived_from ?? undefined,
               materialId: r.material_id ?? undefined,
               areaOfInterest: r.area_of_interest ?? undefined,
+              sharingEligible: r.sharing_eligible ?? undefined,
+              active: r.active ?? undefined,
               createdAt: r.created_at,
               updatedAt: r.updated_at,
             }
@@ -593,6 +619,7 @@ export const useAppStore = create<AppState>()(
               ref: r.ref,
               outcome: r.outcome ?? undefined,
               model: r.model ?? undefined,
+              source: r.source ?? undefined,
             })
           }
 
@@ -662,6 +689,7 @@ export const useAppStore = create<AppState>()(
               chapterId: r.chapter_id,
               sectionId: r.section_id ?? undefined,
               content: r.content,
+              callEventId: r.call_event_id ?? undefined,
               createdAt: r.created_at,
               updatedAt: r.updated_at,
             })
@@ -675,6 +703,7 @@ export const useAppStore = create<AppState>()(
               chapterId: r.chapter_id,
               sectionId: r.section_id ?? undefined,
               content: r.content,
+              callEventId: r.call_event_id ?? undefined,
               createdAt: r.created_at,
               updatedAt: r.updated_at,
             })
@@ -688,8 +717,22 @@ export const useAppStore = create<AppState>()(
               chapterId: r.chapter_id,
               sectionId: r.section_id ?? undefined,
               content: r.content,
+              callEventId: r.call_event_id ?? undefined,
               createdAt: r.created_at,
               updatedAt: r.updated_at,
+            })
+          }
+
+          const byCheatStudyExtractedShape = new Map(state.cheatStudyExtractedShapes.map((s) => [s.id, s]))
+          for (const r of data.cheatStudyExtractedShapes ?? []) {
+            byCheatStudyExtractedShape.set(r.id, {
+              id: r.id,
+              materialId: r.material_id,
+              format: r.format ?? undefined,
+              hasMultipleChoice: r.has_multiple_choice ?? false,
+              diagramTypes: r.diagram_types ?? [],
+              detectedPattern: r.detected_pattern ?? undefined,
+              createdAt: r.created_at,
             })
           }
 
@@ -783,6 +826,7 @@ export const useAppStore = create<AppState>()(
             cheatStudySolutions: pruneDeleted(Array.from(byCheatStudySolution.values()), new Set((data.cheatStudySolutions ?? []).map((r) => r.id))),
             cheatStudyExercises: pruneDeleted(Array.from(byCheatStudyExercise.values()), new Set((data.cheatStudyExercises ?? []).map((r) => r.id))),
             cheatStudyPrereqs: pruneDeleted(Array.from(byCheatStudyPrereq.values()), new Set((data.cheatStudyPrereqs ?? []).map((r) => r.id))),
+            cheatStudyExtractedShapes: pruneDeleted(Array.from(byCheatStudyExtractedShape.values()), new Set((data.cheatStudyExtractedShapes ?? []).map((r) => r.id))),
             textEdits: pruneDeleted(Array.from(byTextEdit.values()), new Set((data.textEdits ?? []).map((r) => r.id))),
           }
         })
@@ -1007,6 +1051,10 @@ export const useAppStore = create<AppState>()(
             cheatStudySolutions: s.cheatStudySolutions.filter((x) => x.examMaterialId !== id),
             cheatStudyExercises: s.cheatStudyExercises.filter((x) => x.examMaterialId !== id),
             cheatStudyPrereqs: s.cheatStudyPrereqs.filter((x) => x.examMaterialId !== id),
+            // No syncDelete needed for this one -- `on delete cascade` on
+            // the FK (schema.sql) already removes the real row server-side
+            // when the material goes; only the local array needs the filter.
+            cheatStudyExtractedShapes: s.cheatStudyExtractedShapes.filter((x) => x.materialId !== id),
             chapters: s.chapters.filter((c) => c.materialId !== id),
             highlights: s.highlights.filter((h) => h.materialId !== id),
             textEdits: s.textEdits.filter((t) => t.materialId !== id),
@@ -1507,9 +1555,19 @@ export const useAppStore = create<AppState>()(
             derived_from: skill.derivedFrom,
             material_id: skill.materialId,
             area_of_interest: skill.areaOfInterest,
+            sharing_eligible: skill.sharingEligible ?? null,
+            active: skill.active ?? true,
             created_at: skill.createdAt, // see resyncSkillsForDomainFix's comment
             updated_at: skill.updatedAt,
           })
+      },
+
+      setSkillActive: (id, active) => {
+        const now = nowIso()
+        set((s) => ({ skills: s.skills.map((sk) => (sk.id === id ? { ...sk, active, updatedAt: now } : sk)) }))
+        const u = get().currentUserId
+        const skill = get().skills.find((sk) => sk.id === id)
+        if (canSync(u) && skill) syncUpsert('skills', u, { id: skill.id, active, updated_at: now })
       },
 
       upsertSkillContent: (id, content, fallback) => {
@@ -1574,20 +1632,26 @@ export const useAppStore = create<AppState>()(
           })
       },
 
+      removeSkill: (id) => {
+        set((s) => ({ skills: s.skills.filter((sk) => sk.id !== id), archivedSkills: s.archivedSkills.filter((sk) => sk.id !== id) }))
+        const u = get().currentUserId
+        if (canSync(u)) syncDelete('skills', u, id)
+      },
+
       logFormulaGateAttempt: (attempt) => {
         set((s) => ({ formulaGateAttempts: [...s.formulaGateAttempts, attempt].slice(-SKILL_EVENTS_CAP) }))
       },
 
-      logSkillCall: (domain, config, skillIds, model) => {
-        const event = logCall(domain, config, skillIds, model)
+      logSkillCall: (domain, config, skillIds, model, source) => {
+        const event = logCall(domain, config, skillIds, model, source)
         set((s) => ({ skillEvents: [...s.skillEvents, event].slice(-SKILL_EVENTS_CAP) }))
         const u = get().currentUserId
         syncSkillEvent(u, event)
         return event
       },
 
-      recordSkillOutcome: (callEvent, outcome) => {
-        const event = logOutcome(callEvent, outcome)
+      recordSkillOutcome: (callEvent, outcome, source) => {
+        const event = logOutcome(callEvent, outcome, source)
         set((s) => {
           const events = [...s.skillEvents, event].slice(-SKILL_EVENTS_CAP)
           const touched = new Set(event.skillIds)
@@ -1754,12 +1818,12 @@ export const useAppStore = create<AppState>()(
         if (canSync(u)) syncDelete('summaries', u, id)
       },
 
-      setCheatStudySolution: (examMaterialId, chapterId, sectionId, content) => {
+      setCheatStudySolution: (examMaterialId, chapterId, sectionId, content, callEventId) => {
         const now = nowIso()
         const existing = get().cheatStudySolutions.find((s) => s.examMaterialId === examMaterialId && s.chapterId === chapterId && s.sectionId === sectionId)
         const solution: CheatStudySolution = existing
-          ? { ...existing, content, updatedAt: now }
-          : { id: uid(), examMaterialId, chapterId, sectionId, content, createdAt: now, updatedAt: now }
+          ? { ...existing, content, callEventId: callEventId ?? existing.callEventId, updatedAt: now }
+          : { id: uid(), examMaterialId, chapterId, sectionId, content, callEventId, createdAt: now, updatedAt: now }
         set((s) => ({ cheatStudySolutions: [...s.cheatStudySolutions.filter((x) => x.id !== solution.id), solution] }))
         const u = get().currentUserId
         if (canSync(u))
@@ -1769,6 +1833,7 @@ export const useAppStore = create<AppState>()(
             chapter_id: solution.chapterId,
             section_id: solution.sectionId,
             content: solution.content,
+            call_event_id: solution.callEventId,
           })
       },
       removeCheatStudySolution: (id) => {
@@ -1777,12 +1842,12 @@ export const useAppStore = create<AppState>()(
         if (canSync(u)) syncDelete('cheat_study_solutions', u, id)
       },
 
-      setCheatStudyExercise: (examMaterialId, chapterId, sectionId, content) => {
+      setCheatStudyExercise: (examMaterialId, chapterId, sectionId, content, callEventId) => {
         const now = nowIso()
         const existing = get().cheatStudyExercises.find((s) => s.examMaterialId === examMaterialId && s.chapterId === chapterId && s.sectionId === sectionId)
         const exercise: CheatStudyExercise = existing
-          ? { ...existing, content, updatedAt: now }
-          : { id: uid(), examMaterialId, chapterId, sectionId, content, createdAt: now, updatedAt: now }
+          ? { ...existing, content, callEventId: callEventId ?? existing.callEventId, updatedAt: now }
+          : { id: uid(), examMaterialId, chapterId, sectionId, content, callEventId, createdAt: now, updatedAt: now }
         set((s) => ({ cheatStudyExercises: [...s.cheatStudyExercises.filter((x) => x.id !== exercise.id), exercise] }))
         const u = get().currentUserId
         if (canSync(u))
@@ -1792,6 +1857,7 @@ export const useAppStore = create<AppState>()(
             chapter_id: exercise.chapterId,
             section_id: exercise.sectionId,
             content: exercise.content,
+            call_event_id: exercise.callEventId,
           })
       },
       removeCheatStudyExercise: (id) => {
@@ -1800,12 +1866,12 @@ export const useAppStore = create<AppState>()(
         if (canSync(u)) syncDelete('cheat_study_exercises', u, id)
       },
 
-      setCheatStudyPrereq: (examMaterialId, chapterId, sectionId, content) => {
+      setCheatStudyPrereq: (examMaterialId, chapterId, sectionId, content, callEventId) => {
         const now = nowIso()
         const existing = get().cheatStudyPrereqs.find((s) => s.examMaterialId === examMaterialId && s.chapterId === chapterId && s.sectionId === sectionId)
         const prereq: CheatStudyPrereqSet = existing
-          ? { ...existing, content, updatedAt: now }
-          : { id: uid(), examMaterialId, chapterId, sectionId, content, createdAt: now, updatedAt: now }
+          ? { ...existing, content, callEventId: callEventId ?? existing.callEventId, updatedAt: now }
+          : { id: uid(), examMaterialId, chapterId, sectionId, content, callEventId, createdAt: now, updatedAt: now }
         set((s) => ({ cheatStudyPrereqs: [...s.cheatStudyPrereqs.filter((x) => x.id !== prereq.id), prereq] }))
         const u = get().currentUserId
         if (canSync(u))
@@ -1815,8 +1881,26 @@ export const useAppStore = create<AppState>()(
             chapter_id: prereq.chapterId,
             section_id: prereq.sectionId,
             content: prereq.content,
+            call_event_id: prereq.callEventId,
           })
       },
+      setCheatStudyExtractedShape: (materialId, shape) => {
+        const now = nowIso()
+        const existing = get().cheatStudyExtractedShapes.find((s) => s.materialId === materialId)
+        const record: ExtractedShape = existing ? { ...existing, ...shape } : { id: uid(), materialId, ...shape, createdAt: now }
+        set((s) => ({ cheatStudyExtractedShapes: [...s.cheatStudyExtractedShapes.filter((x) => x.id !== record.id), record] }))
+        const u = get().currentUserId
+        if (canSync(u))
+          syncUpsert('cheat_study_extracted_shapes', u, {
+            id: record.id,
+            material_id: record.materialId,
+            format: record.format,
+            has_multiple_choice: record.hasMultipleChoice,
+            diagram_types: record.diagramTypes,
+            detected_pattern: record.detectedPattern,
+          })
+      },
+
       removeCheatStudyPrereq: (id) => {
         set((s) => ({ cheatStudyPrereqs: s.cheatStudyPrereqs.filter((x) => x.id !== id) }))
         const u = get().currentUserId
@@ -1884,6 +1968,7 @@ export const useAppStore = create<AppState>()(
         cheatStudySolutions: s.cheatStudySolutions,
         cheatStudyExercises: s.cheatStudyExercises,
         cheatStudyPrereqs: s.cheatStudyPrereqs,
+        cheatStudyExtractedShapes: s.cheatStudyExtractedShapes,
         textEdits: s.textEdits,
       }),
     },

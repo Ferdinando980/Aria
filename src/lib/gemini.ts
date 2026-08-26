@@ -687,7 +687,16 @@ ${CHOICE_RULE}
 ${PLACE_VALUE_RULE}
 - Testo semplice (nessun JSON), niente introduzioni tipo "Ecco la soluzione".`
 
-export async function generateCheatStudySolution(exerciseTitle: string, exerciseText: string, studyContext: string | null, skillContext?: string): Promise<string> {
+// User note appended as a plain extra line on the user-turn prompt, not the
+// systemInstruction (2026-08-26, skill-training section: "un campo di testo
+// libero opzionale dove l'utente scrive un'indicazione su come vorrebbe la
+// generazione") -- same optional-final-arg shape as skillContext, so every
+// EXISTING call site (real Cheat Study, never passes this) is unaffected.
+function withUserNote(prompt: string, userNote?: string): string {
+  return userNote?.trim() ? `${prompt}\n\nIndicazione dell'utente per questa generazione (seguila se ragionevole):\n${userNote.trim()}` : prompt
+}
+
+export async function generateCheatStudySolution(exerciseTitle: string, exerciseText: string, studyContext: string | null, skillContext?: string, userNote?: string): Promise<string> {
   const key = getGeminiKey()
   if (!key) throw new Error('missing_key')
 
@@ -696,7 +705,7 @@ export async function generateCheatStudySolution(exerciseTitle: string, exercise
     ? `Esercizio: ${exerciseTitle}\n\nTesto dell'esercizio:\n${exerciseText.slice(0, 6000)}\n\nMateriale di studio reale trovato per questo argomento:\n${studyContext!.slice(0, 15000)}`
     : `Esercizio: ${exerciseTitle}\n\nTesto dell'esercizio:\n${exerciseText.slice(0, 6000)}`
   const prompt_ = CHEAT_STUDY_PROMPT.replace('{{GROUNDING_NOTE}}', grounded ? GROUNDED_NOTE : UNGROUNDED_NOTE)
-  const result = await generateWithFallback(key, { systemInstruction: withSkillContext(prompt_, skillContext) }, (model) => model.generateContent(prompt))
+  const result = await generateWithFallback(key, { systemInstruction: withSkillContext(prompt_, skillContext) }, (model) => model.generateContent(withUserNote(prompt, userNote)))
   return result.response.text().trim()
 }
 
@@ -712,7 +721,7 @@ ${CHOICE_RULE}
 ${PLACE_VALUE_RULE}
 - Testo semplice (nessun JSON), niente introduzioni tipo "Ecco l'esercizio".`
 
-export async function generateEquivalentExercise(exerciseTitle: string, exerciseText: string, studyContext: string | null, skillContext?: string): Promise<string> {
+export async function generateEquivalentExercise(exerciseTitle: string, exerciseText: string, studyContext: string | null, skillContext?: string, userNote?: string): Promise<string> {
   const key = getGeminiKey()
   if (!key) throw new Error('missing_key')
 
@@ -721,7 +730,7 @@ export async function generateEquivalentExercise(exerciseTitle: string, exercise
     ? `Esercizio originale: ${exerciseTitle}\n\nTesto:\n${exerciseText.slice(0, 6000)}\n\nMateriale di studio reale collegato a questo argomento:\n${studyContext!.slice(0, 15000)}`
     : `Esercizio originale: ${exerciseTitle}\n\nTesto:\n${exerciseText.slice(0, 6000)}`
   const prompt_ = EQUIVALENT_EXERCISE_PROMPT.replace('{{GROUNDING_NOTE}}', grounded ? GROUNDED_NOTE : UNGROUNDED_NOTE)
-  const result = await generateWithFallback(key, { systemInstruction: withSkillContext(prompt_, skillContext) }, (model) => model.generateContent(prompt))
+  const result = await generateWithFallback(key, { systemInstruction: withSkillContext(prompt_, skillContext) }, (model) => model.generateContent(withUserNote(prompt, userNote)))
   return result.response.text().trim()
 }
 
@@ -749,7 +758,7 @@ ${PLACE_VALUE_RULE}
 - VAI DRITTO al primo "## Esercizio base 1" subito dopo l'eventuale riga di dichiarazione -- MAI un'introduzione, un glossario, o un elenco di "concetti chiave" prima della scala: il primo esercizio facile E' il gradino iniziale, non serve un altro gradino prima di lui. MAI separatori "---" o simili tra un esercizio e il successivo -- il titolo "## Esercizio base N" del prossimo separa già visivamente.
 - Testo semplice (nessun JSON), niente introduzioni tipo "Ecco la scala di esercizi".`
 
-export async function generatePrerequisiteExercises(exerciseTitle: string, exerciseText: string, studyContext: string | null, skillContext?: string): Promise<string> {
+export async function generatePrerequisiteExercises(exerciseTitle: string, exerciseText: string, studyContext: string | null, skillContext?: string, userNote?: string): Promise<string> {
   const key = getGeminiKey()
   if (!key) throw new Error('missing_key')
 
@@ -758,7 +767,7 @@ export async function generatePrerequisiteExercises(exerciseTitle: string, exerc
     ? `Esercizio: ${exerciseTitle}\n\nTesto dell'esercizio:\n${exerciseText.slice(0, 6000)}\n\nMateriale di studio reale trovato per questo argomento:\n${studyContext!.slice(0, 15000)}`
     : `Esercizio: ${exerciseTitle}\n\nTesto dell'esercizio:\n${exerciseText.slice(0, 6000)}`
   const prompt_ = PREREQ_EXERCISES_PROMPT.replace('{{GROUNDING_NOTE}}', grounded ? GROUNDED_NOTE : UNGROUNDED_NOTE)
-  const result = await generateWithFallback(key, { systemInstruction: withSkillContext(prompt_, skillContext) }, (model) => model.generateContent(prompt))
+  const result = await generateWithFallback(key, { systemInstruction: withSkillContext(prompt_, skillContext) }, (model) => model.generateContent(withUserNote(prompt, userNote)))
   return result.response.text().trim()
 }
 

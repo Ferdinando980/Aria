@@ -15,6 +15,7 @@ const Assistant = lazy(() => import('./pages/Assistant'))
 const Flashcards = lazy(() => import('./pages/Flashcards'))
 const Summaries = lazy(() => import('./pages/Summaries'))
 const CheatStudy = lazy(() => import('./pages/CheatStudy'))
+const SkillTraining = lazy(() => import('./pages/SkillTraining'))
 const ProgressPage = lazy(() => import('./pages/Progress'))
 const Game = lazy(() => import('./pages/Game'))
 import { useAppStore } from './store/useAppStore'
@@ -180,6 +181,7 @@ function SyncBootstrap() {
           cheatStudySolutions: state.cheatStudySolutions,
           cheatStudyExercises: state.cheatStudyExercises,
           cheatStudyPrereqs: state.cheatStudyPrereqs,
+          cheatStudyExtractedShapes: state.cheatStudyExtractedShapes,
           textEdits: state.textEdits,
         })
         // Only mark done on a FULLY successful push (2026-08-24, prompted by
@@ -251,6 +253,7 @@ export default function App() {
               <Route path="/flashcard" element={<Flashcards />} />
               <Route path="/riassunti" element={<Summaries />} />
               <Route path="/cheat-study" element={<CheatStudy />} />
+              <Route path="/allenamento" element={<SkillTraining />} />
               <Route path="/progressi" element={<ProgressPage />} />
               <Route path="/impostazioni" element={<Settings />} />
             </Route>

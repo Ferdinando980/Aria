@@ -153,7 +153,10 @@ create table if not exists skills (
   domain text not null check (domain in ('chat', 'task_breakdown', 'material_chat', 'study_plan', 'pdf_edit', 'material_knowledge', 'chapters', 'flashcards', 'summary', 'formula_example', 'cheat_study')),
   capability_tags text[] not null default '{}',
   content text not null,
-  status text not null default 'DRAFT' check (status in ('DRAFT', 'VERIFIED', 'PERSONAL_NOTE', 'REJECTED', 'ARCHIVED')),
+  status text not null default 'DRAFT' check (status in ('DRAFT', 'VERIFIED', 'PERSONAL_NOTE', 'REJECTED', 'ARCHIVED', 'CROSS_USER_CANDIDATE')),
+  -- Manual on/off, independent of status (2026-08-26) -- see skills.ts's
+  -- routeSkills() and types.ts's Skill.active comment.
+  active boolean not null default true,
   confidence real not null default 0,
   uses int not null default 0,
   successes int not null default 0,
@@ -172,17 +175,30 @@ create table if not exists skills (
   -- that and could destroy a skill's content before the archive logic runs.
   material_id uuid references materials(id) on delete set null,
   area_of_interest text,
+  -- LLM judgment "is this edit-distilled skill actually generic, or tied to
+  -- the specific content uploaded" (2026-08-26) -- see classifyForSharing()
+  -- in skills.ts. Null = not yet judged (every skill predating this column,
+  -- or not distilled from a training edit) -- treated as 'no' there.
+  sharing_eligible boolean,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 alter table skills add column if not exists material_id uuid references materials(id) on delete set null;
 alter table skills add column if not exists area_of_interest text;
+alter table skills add column if not exists sharing_eligible boolean;
 -- schema_drift_check.mjs companions for the type change above (2026-08-24c,
 -- verified already applied on the real DB -- see migration_2026-08-24c.sql):
 -- these are no-ops there, but without them a brand-new project created
 -- fresh from this file alone would get id/derived_from as uuid, not text.
 alter table skills alter column id type text;
 alter table skills alter column derived_from type text;
+-- schema_drift_check.mjs companion for the CHECK constraint change above
+-- (2026-08-26d, 'CROSS_USER_CANDIDATE' added -- see migration_2026-08-26d.sql):
+-- no-op on a fresh install (the create table above already has the new
+-- constraint), needed for an existing DB whose constraint predates it.
+alter table skills drop constraint if exists skills_status_check;
+alter table skills add constraint skills_status_check check (status in ('DRAFT', 'VERIFIED', 'PERSONAL_NOTE', 'REJECTED', 'ARCHIVED', 'CROSS_USER_CANDIDATE'));
+alter table skills add column if not exists active boolean not null default true;
 
 create table if not exists skill_events (
   id uuid primary key,
@@ -199,9 +215,14 @@ create table if not exists skill_events (
   -- Exact Gemini model string used for this CALL (2026-08-20) -- so a
   -- silent model change can be spotted by diffing this field over time,
   -- the same confound that hit the Python research's first real run.
-  model text
+  model text,
+  -- 'organic' (real usage) vs 'training' (the dedicated skill-training
+  -- section, 2026-08-26) -- null means organic, for every event that
+  -- predates this column, which was never anything else.
+  source text check (source in ('organic', 'training'))
 );
 alter table skill_events add column if not exists model text;
+alter table skill_events add column if not exists source text check (source in ('organic', 'training'));
 
 -- Evidenziazioni PDF ("collegamenti", 2026-08-20) -- vedi src/lib/pdfHighlights.ts,
 -- components/materials/PdfViewer.tsx. `rects` è la selezione reale catturata al
@@ -323,6 +344,29 @@ create table if not exists cheat_study_prereqs (
   updated_at timestamptz not null default now()
 );
 
+-- Collega ogni output al vero SkillEvent CALL che l'ha generato (2026-08-26,
+-- sezione di addestramento skill) -- senza questo, dare un esito su un
+-- esercizio riaperto più tardi (non appena generato) non ha nulla a cui
+-- agganciarsi: prima viveva solo in stato React locale, perso al reload.
+alter table cheat_study_solutions add column if not exists call_event_id uuid references skill_events(id) on delete set null;
+alter table cheat_study_exercises add column if not exists call_event_id uuid references skill_events(id) on delete set null;
+alter table cheat_study_prereqs add column if not exists call_event_id uuid references skill_events(id) on delete set null;
+
+-- "Forma estratta" (2026-08-26, sezione di addestramento skill): il file
+-- caricato lì non viene mai persistito (né su Storage né come base64) --
+-- solo questa rappresentazione strutturata piccola, per economia di storage
+-- reale e provenienza minima di ogni skill distillata da quel materiale.
+create table if not exists cheat_study_extracted_shapes (
+  id uuid primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  material_id uuid not null references materials(id) on delete cascade,
+  format text,
+  has_multiple_choice boolean not null default false,
+  diagram_types text[] not null default '{}',
+  detected_pattern text,
+  created_at timestamptz not null default now()
+);
+
 -- Correzioni visive di testo sul PDF ("modifica testo", 2026-08-20) -- NON
 -- riscrive il file PDF: copre il testo originale con un rettangolo e disegna
 -- la sostituzione sopra al momento del rendering. Vedi TextEdit in types.ts
@@ -366,6 +410,7 @@ alter table text_edits enable row level security;
 alter table cheat_study_solutions enable row level security;
 alter table cheat_study_exercises enable row level security;
 alter table cheat_study_prereqs enable row level security;
+alter table cheat_study_extracted_shapes enable row level security;
 
 -- drop-if-exists prima di ogni create policy: questo file è pensato per
 -- essere rieseguibile su un progetto che ha già parte delle tabelle (2026-08-20,
@@ -404,6 +449,50 @@ drop policy if exists "own rows" on cheat_study_prereqs;
 create policy "own rows" on cheat_study_prereqs for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 drop policy if exists "own rows" on text_edits;
 create policy "own rows" on text_edits for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+drop policy if exists "own rows" on cheat_study_extracted_shapes;
+create policy "own rows" on cheat_study_extracted_shapes for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- Conteggio verifiche cross-utente (2026-08-26, sezione di addestramento
+-- skill) -- SECURITY DEFINER perché deve vedere skill di ALTRI utenti per
+-- contarle, cosa che le policy RLS "own rows" sopra impedirebbero
+-- altrimenti a un client normale. Ritorna SOLO numeri aggregati, mai il
+-- contenuto delle skill altrui. Corrispondenza v1 deliberatamente semplice
+-- (stesso dominio + stesso testo esatto) -- limite noto e dichiarato, non
+-- un tentativo di matching semantico spacciato per preciso. Filtra a monte
+-- su skill_sharing_consent (mai dopo il confronto).
+create or replace function cross_user_verification_count(p_skill_id text)
+returns table(verification_count int, distinct_user_count int)
+language sql
+security definer
+set search_path = public
+as $$
+  select
+    coalesce(sum(other.successes), 0)::int as verification_count,
+    count(distinct other.user_id)::int as distinct_user_count
+  from skills mine
+  join skills other
+    on other.domain = mine.domain
+    and other.content = mine.content
+    and other.user_id <> mine.user_id
+    and other.status in ('PERSONAL_NOTE', 'CROSS_USER_CANDIDATE', 'VERIFIED')
+  join profiles p on p.user_id = other.user_id and p.skill_sharing_consent = true
+  where mine.id = p_skill_id;
+$$;
+grant execute on function cross_user_verification_count(text) to authenticated;
+
+-- Denominatore reale per requiredCrossUserVerifications() (skills.ts,
+-- 2026-08-26) -- stesso principio "consenso applicato a monte" della
+-- funzione sopra: conta SOLO profili con skill_sharing_consent = true, mai
+-- il totale utenti grezzo.
+create or replace function active_consenting_user_count()
+returns int
+language sql
+security definer
+set search_path = public
+as $$
+  select count(*)::int from profiles where skill_sharing_consent = true;
+$$;
+grant execute on function active_consenting_user_count() to authenticated;
 
 -- Realtime (per il sync live tra PC e mobile) -- una tabella alla volta con
 -- gestione errore: "alter publication add table" non supporta "if not

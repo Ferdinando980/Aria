@@ -12,11 +12,14 @@ import type { SkillDomain, SkillEvent, SkillOutcome } from './types'
  * experiment calls.
  */
 
-export function logCall(domain: SkillDomain, config: 'F' | 'B', skillIds: string[], model: string): SkillEvent {
-  return { id: uid(), ts: nowIso(), domain, config, eventType: 'CALL', skillIds, ref: '', model }
+// `source` (2026-08-26): undefined/omitted means 'organic' (real usage) --
+// only the skill-training section (SkillTraining.tsx) ever passes
+// 'training' explicitly. See SkillEvent.source's comment in types.ts.
+export function logCall(domain: SkillDomain, config: 'F' | 'B', skillIds: string[], model: string, source?: 'organic' | 'training'): SkillEvent {
+  return { id: uid(), ts: nowIso(), domain, config, eventType: 'CALL', skillIds, ref: '', model, source }
 }
 
-export function logOutcome(callEvent: SkillEvent, outcome: SkillOutcome): SkillEvent {
+export function logOutcome(callEvent: SkillEvent, outcome: SkillOutcome, source?: 'organic' | 'training'): SkillEvent {
   return {
     id: uid(),
     ts: nowIso(),
@@ -26,6 +29,7 @@ export function logOutcome(callEvent: SkillEvent, outcome: SkillOutcome): SkillE
     skillIds: callEvent.skillIds,
     ref: callEvent.id,
     outcome,
+    source: source ?? callEvent.source,
   }
 }
 
@@ -43,6 +47,7 @@ export async function syncSkillEvent(userId: string | undefined, event: SkillEve
       ref: event.ref,
       outcome: event.outcome,
       model: event.model,
+      source: event.source,
     })
   } catch (err) {
     console.warn('[skillEvents] sync failed', err)

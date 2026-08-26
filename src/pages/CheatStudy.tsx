@@ -90,8 +90,11 @@ async function readFileBuffer(material: Material): Promise<ArrayBuffer | null> {
 }
 
 /** Raw bytes -> base64 for Gemini's inlineData, no "data:...;base64," prefix
- * -- same shape as ChatAttachment (gemini.ts) built elsewhere from a File. */
-function bufferToBase64(buf: ArrayBuffer): string {
+ * -- same shape as ChatAttachment (gemini.ts) built elsewhere from a File.
+ * Exported (2026-08-26) so SkillTraining.tsx's no-Storage upload path (a raw
+ * File's bytes, never written anywhere) can reuse it instead of a second
+ * copy of the same five lines. */
+export function bufferToBase64(buf: ArrayBuffer): string {
   let binary = ''
   const bytes = new Uint8Array(buf)
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])

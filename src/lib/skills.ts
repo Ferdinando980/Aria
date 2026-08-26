@@ -1,4 +1,5 @@
 import { getGeminiKey, generateWithFallback } from './gemini'
+import { supabase } from './supabase'
 import { uid, nowIso } from './utils'
 import type { Skill, SkillDomain, SkillEvent } from './types'
 
@@ -71,7 +72,7 @@ export function routeSkills(
   const tagSet = new Set(tags)
   const scored = skills
     .map(toMeta)
-    .filter((s) => s.domain === domain && s.status !== 'REJECTED')
+    .filter((s) => s.domain === domain && s.status !== 'REJECTED' && s.active !== false)
     .map((s) => ({ skill: s, overlap: s.capabilityTags.filter((t) => tagSet.has(t)).length }))
     .filter((x) => x.overlap >= minOverlap)
   scored.sort((a, b) => b.overlap - a.overlap)
@@ -118,7 +119,7 @@ export function routeMaterialKnowledge(skills: Skill[], materialId: string, opti
   const { chapterId, sectionId, maxSkills = 3 } = options
   const matches = skills
     .map(toMeta)
-    .filter((s) => s.domain === 'material_knowledge' && s.materialId === materialId && s.status !== 'REJECTED')
+    .filter((s) => s.domain === 'material_knowledge' && s.materialId === materialId && s.status !== 'REJECTED' && s.active !== false)
     .map((s) => ({ skill: s, tier: specificityTier(s, chapterId, sectionId) }))
     .filter((x): x is { skill: SkillMeta; tier: number } => x.tier !== null)
   matches.sort((a, b) => {
@@ -764,4 +765,215 @@ export function recognizeArchivedSkills(archivedSkills: Skill[], newSubjectName:
     else stillArchived.push(s)
   }
   return { recognized, stillArchived }
+}
+
+// ---- skill-training section (2026-08-26) -- edit-diff signal, three-way
+// outcome classification, personal distillation, and the cross-user
+// promotion pipeline. See src/pages/SkillTraining.tsx for the page that
+// uses all of this.
+
+/** Classic Levenshtein distance, normalized to [0, 1] by the longer of the
+ * two strings' length. Deliberately a real edit distance, not a token/word
+ * overlap proxy -- "modifica minima" vs "sostanziale" (point 3 of the spec)
+ * needs to catch a small but real rewrite (few words moved/reworded), which
+ * a set-overlap measure would under-count. O(n*m) DP is fine at the sizes
+ * these exercises actually are (low thousands of characters at most). */
+function editRatio(a: string, b: string): number {
+  if (a === b) return 0
+  const la = a.length
+  const lb = b.length
+  if (la === 0 || lb === 0) return 1
+  let prev = Array.from({ length: lb + 1 }, (_, j) => j)
+  for (let i = 1; i <= la; i++) {
+    const cur = [i]
+    for (let j = 1; j <= lb; j++) {
+      cur[j] = a[i - 1] === b[j - 1] ? prev[j - 1] : 1 + Math.min(prev[j - 1], prev[j], cur[j - 1])
+    }
+    prev = cur
+  }
+  return prev[lb] / Math.max(la, lb)
+}
+
+// Named, commented, not a bare number in the classifier below (2026-08-26,
+// same "no naked constants" discipline as CROSS_USER_MIN_VERIFICATIONS
+// further down) -- a starting point declared as such, to recalibrate once
+// there's enough real edit data to judge whether these are too permissive
+// or too strict.
+const EDIT_RATIO_SUBSTANTIAL = 0.4 // at/above this fraction of characters changed: "modifica sostanziale" -> NEGATIVE-leaning
+
+export type EditOutcome = 'POSITIVE' | 'NEGATIVE' | 'NO_FEEDBACK'
+
+/**
+ * The three-way outcome (spec point 3): NO_FEEDBACK is not "unmeasured
+ * positive" or "unmeasured negative" -- it is excluded ENTIRELY from
+ * anything that counts POSITIVE/NEGATIVE evidence (denominators, required-
+ * verification counts), so a silent user never helps or hurts a skill.
+ * `engaged` is the signal that distinguishes "opened/looked at this and
+ * left it alone" (counts, via the edit-ratio fallback, since the person
+ * DID interact) from "never touched it at all" (NO_FEEDBACK, regardless of
+ * what original/edited happen to contain) -- see SkillTraining.tsx for how
+ * `engaged` is set (opening the edit view for that output).
+ */
+export function classifyEditOutcome({
+  engaged,
+  original,
+  edited,
+  explicitFeedback,
+}: {
+  engaged: boolean
+  original: string
+  edited: string
+  explicitFeedback?: 'positive' | 'negative'
+}): EditOutcome {
+  if (!engaged && !explicitFeedback) return 'NO_FEEDBACK'
+  if (explicitFeedback) return explicitFeedback === 'positive' ? 'POSITIVE' : 'NEGATIVE'
+  return editRatio(original, edited) >= EDIT_RATIO_SUBSTANTIAL ? 'NEGATIVE' : 'POSITIVE'
+}
+
+/**
+ * Sibling of domainClass() (spec point 5), NOT a replacement -- 'cheat_study'
+ * (the domain every skill-training-section skill lives in, since it edits
+ * real Cheat Study output) is 'content'-class by domainClass()'s own table,
+ * for real reasons (see that function's comment: always routed with the
+ * exam material's own id). A skill trained here can still be a genuinely
+ * generalizable STYLE/STRUCTURE principle even though its domain is
+ * content-class -- Skill.sharingEligible is the one narrow, explicit,
+ * inspectable override: set ONCE at distillation time (distillFromEdit
+ * below) by a written prompt judging THAT skill's own already-generalized
+ * content, never re-guessed here from text after the fact. Written rule,
+ * not an implicit heuristic: read the two conditions below, that IS the
+ * whole rule.
+ */
+export function classifyForSharing(skill: Skill): 'personal' | 'cross_user_candidate' {
+  if (skill.generationMethod !== 'distilled') return 'personal'
+  if (skill.sharingEligible) return 'cross_user_candidate'
+  if (domainClass(skill.domain) === 'procedure') return 'cross_user_candidate'
+  return 'personal'
+}
+
+// Absolute floor + a fraction of the real user base (spec point 6) -- a
+// fixed number alone breaks at scale (10 confirmations mean nothing among
+// 10,000 users the same way they might among 20), a pure fraction alone
+// breaks at the OTHER end (0.1 * 2 users rounds to nothing, a skill could
+// never need more than 1 real verification). Both parameters are a
+// declared starting point (see the function's own comment), not a
+// calibrated result -- there is no real multi-user volume yet to calibrate
+// against.
+const CROSS_USER_MIN_VERIFICATIONS = 10 // absolute floor -- never promotable below this regardless of user count
+const CROSS_USER_SCALE_FACTOR = 0.1 // above the floor, requires this fraction of the active user base
+
+/** How many independent POSITIVE cross-user verifications a skill needs to
+ * clear before CROSS_USER_CANDIDATE can promote to VERIFIED. Recalibrate
+ * CROSS_USER_MIN_VERIFICATIONS/CROSS_USER_SCALE_FACTOR above once real
+ * multi-user volume exists to judge whether these are too permissive or
+ * too strict -- these two numbers are a declared starting point, not a
+ * result. */
+export function requiredCrossUserVerifications(totalActiveUsers: number): number {
+  return Math.max(CROSS_USER_MIN_VERIFICATIONS, Math.ceil(CROSS_USER_SCALE_FACTOR * totalActiveUsers))
+}
+
+/** Pure decision given a verification count already gathered (spec point
+ * 6's "distinct users... not a blocking gate") -- the actual gathering of
+ * `verificationCount`/`distinctUserCount` happens server-side, via the
+ * cross_user_verification_count() Postgres function (schema.sql), which is
+ * also where consent (spec point 7) is enforced -- a user without
+ * skill_sharing_consent is never even visible to that function's join, not
+ * filtered out after client-side. This function only decides, given
+ * numbers already honestly gathered, whether they clear the bar. */
+export function evaluateCrossUserPromotion(
+  candidate: Skill,
+  verificationCount: number,
+  distinctUserCount: number,
+  totalActiveUsers: number,
+): { promotable: boolean; required: number; verificationCount: number; distinctUserCount: number } {
+  const required = requiredCrossUserVerifications(totalActiveUsers)
+  return { promotable: candidate.status === 'CROSS_USER_CANDIDATE' && verificationCount >= required, required, verificationCount, distinctUserCount }
+}
+
+/** Client wrapper for the two SECURITY DEFINER Postgres functions
+ * (schema.sql) that gather the numbers evaluateCrossUserPromotion() needs
+ * -- both required because RLS ("own rows", every table) makes true
+ * cross-user aggregation impossible from a normal client query. Returns
+ * null (never throws) if not signed in or the RPCs aren't reachable, same
+ * fail-open spirit as syncUpsert elsewhere in this codebase -- a promotion
+ * check that can't run should block nothing, not surface an error to a
+ * user who didn't ask for one. */
+export async function fetchCrossUserPromotion(
+  candidate: Skill,
+): Promise<{ promotable: boolean; required: number; verificationCount: number; distinctUserCount: number } | null> {
+  if (!supabase) return null
+  try {
+    const [verificationRes, usersRes] = await Promise.all([
+      supabase.rpc('cross_user_verification_count', { p_skill_id: candidate.id }),
+      supabase.rpc('active_consenting_user_count'),
+    ])
+    if (verificationRes.error || usersRes.error) {
+      console.warn('[skills] fetchCrossUserPromotion failed', verificationRes.error ?? usersRes.error)
+      return null
+    }
+    const row = Array.isArray(verificationRes.data) ? verificationRes.data[0] : verificationRes.data
+    const verificationCount: number = row?.verification_count ?? 0
+    const distinctUserCount: number = row?.distinct_user_count ?? 0
+    const totalActiveUsers: number = usersRes.data ?? 0
+    return evaluateCrossUserPromotion(candidate, verificationCount, distinctUserCount, totalActiveUsers)
+  } catch (err) {
+    console.warn('[skills] fetchCrossUserPromotion failed', err)
+    return null
+  }
+}
+
+const _EDIT_DISTILL_PROMPT = `Distilli una skill personale riusabile per un'assistente di studio "Aria", a partire dalla differenza tra un contenuto generato dall'AI e la versione corretta a mano da una persona reale, per il dominio "cheat_study" (spiegazioni ed esercizi generati da una traccia d'esame).
+Ti passo il testo originale generato, il testo dopo la correzione dell'utente, ed eventualmente una nota libera scritta dall'utente su come avrebbe voluto la generazione.
+Compiti, in ordine:
+1. Scrivi UN principio riusabile (2-4 righe) su COSA correggere in generazioni future di questo tipo -- una preferenza di stile, struttura o approccio (es. "preferisci il passaggio grafico prima della formula", "mantieni i passi a massimo 3"), MAI un fatto specifico al contenuto di questo esempio (nessun nome proprio, nessuna formula/valore specifico di questo esercizio, nessun riferimento diretto al suo argomento).
+2. Se la nota dell'utente contiene un'indicazione generalizzabile in un principio strutturale (non specifica al contenuto di questo esempio), incorporala nel principio del punto 1. Se la nota è troppo specifica al contenuto per generalizzarla (fa riferimento diretto a dati/argomenti di questo esempio), IGNORALA completamente -- non deve comparire nel principio.
+3. Giudica se il principio del punto 1, così come l'hai scritto, è genuinamente indipendente dall'argomento/materia (varrebbe per qualunque esercizio di qualunque materia) oppure resta legato al contenuto/argomento di questo esempio anche dopo la generalizzazione.
+Rispondi SOLO in questo formato esatto, due righe, nessun'altra parola:
+PRINCIPIO: <il testo del punto 1-2>
+GENERICO: <si oppure no, giudizio del punto 3>`
+
+export interface DistillFromEditInput {
+  exerciseTitle: string
+  original: string
+  edited: string
+  userNote?: string
+}
+
+/** Sibling of distillCandidate() (exchange-based) for the skill-training
+ * section's edit-diff signal -- same MAX_DISTILLED_WORDS safety cap, same
+ * DRAFT-first shape so it re-earns trust through reviewSkills() like any
+ * other distilled skill, PLUS the sharingEligible judgment classifyForSharing()
+ * later reads (see that function's comment for why this domain needs it).
+ * Only called for POSITIVE/NEGATIVE outcomes (never NO_FEEDBACK -- nothing
+ * to distill from silence) -- the CALLER (SkillTraining.tsx) decides that,
+ * this function just needs a real original/edited pair. */
+export async function distillFromEdit({ exerciseTitle, original, edited, userNote }: DistillFromEditInput): Promise<Skill | null> {
+  const key = getGeminiKey()
+  if (!key || original.trim() === edited.trim()) return null // nothing to learn from an unedited pair
+  const prompt = `Esercizio: ${exerciseTitle}\n\nTesto originale generato:\n${original.slice(0, 4000)}\n\nTesto dopo la correzione dell'utente:\n${edited.slice(0, 4000)}${userNote?.trim() ? `\n\nNota dell'utente per questa generazione:\n${userNote.trim()}` : ''}`
+  const result = await generateWithFallback(key, { systemInstruction: _EDIT_DISTILL_PROMPT }, (model) => model.generateContent(prompt))
+  const raw = result.response.text().trim()
+  const principleMatch = raw.match(/PRINCIPIO:\s*([\s\S]*?)\n\s*GENERICO:/i)
+  const genericMatch = raw.match(/GENERICO:\s*(s[iì]|no)/i)
+  const content = principleMatch?.[1]?.trim()
+  if (!content) return null
+  if (content.split(/\s+/).length > MAX_DISTILLED_WORDS) return null
+
+  const now = nowIso()
+  return {
+    id: uid(),
+    version: 1,
+    title: content.slice(0, 60),
+    domain: 'cheat_study',
+    capabilityTags: tagsFromText(exerciseTitle),
+    content,
+    status: 'DRAFT',
+    confidence: 0,
+    uses: 0,
+    successes: 0,
+    generationMethod: 'distilled',
+    sharingEligible: /^s[iì]/i.test(genericMatch?.[1] ?? 'no'),
+    createdAt: now,
+    updatedAt: now,
+  }
 }

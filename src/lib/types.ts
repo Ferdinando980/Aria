@@ -224,6 +224,12 @@ export interface CheatStudySolution {
   chapterId: ID
   sectionId?: ID
   content: string
+  /** The real SkillEvent CALL that generated this content (2026-08-26) --
+   * without this, giving an outcome on content reopened later (not just
+   * right after generating it) has nothing to attach to; before this field
+   * existed the link only lived in transient React state, lost on reload.
+   * Undefined for content generated before this field existed. */
+  callEventId?: ID
   createdAt: string
   updatedAt: string
 }
@@ -238,6 +244,8 @@ export interface CheatStudyExercise {
   chapterId: ID
   sectionId?: ID
   content: string
+  /** See CheatStudySolution.callEventId's comment -- same reasoning. */
+  callEventId?: ID
   createdAt: string
   updatedAt: string
 }
@@ -257,6 +265,8 @@ export interface CheatStudyPrereqSet {
   chapterId: ID
   sectionId?: ID
   content: string
+  /** See CheatStudySolution.callEventId's comment -- same reasoning. */
+  callEventId?: ID
   createdAt: string
   updatedAt: string
 }
@@ -426,19 +436,26 @@ export interface ProfileState {
    * Impostazioni non dipende da questo -- vedi supabase/schema.sql. */
   researchConsent?: boolean
   researchConsentAt?: string
-  /** Opt-in, default FALSE (unlike researchConsent's default-true -- these
-   * are not the same consent). researchConsent covers aggregate analysis of
-   * this account's own usage data, for the researcher's own thesis.
-   * skillSharingConsent covers something categorically different: this
-   * account's DISTILLED skill content being visible to and usable BY OTHER
-   * ARIA USERS. No sharing pipeline reads this flag yet (deferred until
-   * there's a second real user's promotion data to design the pipeline
-   * against, see CLAUDE.md) -- it exists now so the switch is real and
-   * reversible from day one, not bolted on retroactively once sharing
-   * exists. Even when true, only 'procedure'-class domains are ever
-   * eligible (see SkillDomain's comment in this file) -- this flag grants
-   * permission, it is not by itself a claim that any of this account's
-   * skills qualify. */
+  /** Default TRUE as of 2026-08-26 (explicit user request, now that the
+   * cross-user pipeline actually exists -- see skills.ts's
+   * requiredCrossUserVerifications/classifyForSharing and
+   * cross_user_verification_count() in schema.sql). Opt-OUT, not opt-in,
+   * same direction as researchConsent, for the same reason: real accounts
+   * here are all under one person's control right now. researchConsent
+   * covers aggregate analysis of this account's own usage data, for the
+   * researcher's own thesis -- a categorically different thing from this
+   * flag, which covers this account's DISTILLED skill CONTENT being visible
+   * to and usable BY OTHER ARIA USERS. The pipeline this flag gates:
+   * cross_user_verification_count() (SECURITY DEFINER Postgres function)
+   * counts independent positive verifications on a matching skill from
+   * OTHER users, filtered to consenting users only, at the query itself --
+   * a user without consent is never even visible to the comparison, not
+   * filtered out after. Even when true, only 'procedure'-class domains are
+   * ever eligible (see SkillDomain's comment in this file) -- this flag
+   * grants permission, it is not by itself a claim that any of this
+   * account's skills qualify. A skill still needs real independent
+   * evidence to reach CROSS_USER_CANDIDATE and then VERIFIED -- consent
+   * alone promotes nothing. */
   skillSharingConsent?: boolean
   skillSharingConsentAt?: string
 }
@@ -510,11 +527,16 @@ export type SkillDomain = 'chat' | 'task_breakdown' | 'material_chat' | 'study_p
 // that's subtly wrong; VERIFIED-for-content would misrepresent that as
 // having been checked). "Used, not verified" -- content stays useful and
 // keeps being retrieved locally exactly like VERIFIED does, it just never
-// becomes a candidate for the cross-user sharing pipeline (still unbuilt,
-// deferred until there's real multi-user promotion evidence to design
-// against -- see CLAUDE.md's skill-sharing note). Reached via the SAME
-// reviewSkills() bar as VERIFIED, just a different terminal label.
-export type SkillStatus = 'DRAFT' | 'VERIFIED' | 'PERSONAL_NOTE' | 'REJECTED' | 'ARCHIVED'
+// becomes a candidate for the cross-user sharing pipeline. Reached via the
+// SAME reviewSkills() bar as VERIFIED, just a different terminal label.
+// 'CROSS_USER_CANDIDATE' (2026-08-26): a 'procedure'-class skill whose
+// content-pattern has been independently distilled by more than one
+// consenting user -- never reached directly from DRAFT/PERSONAL_NOTE by
+// reviewSkills() (that function only ever produces VERIFIED/PERSONAL_NOTE/
+// REJECTED/DRAFT, unchanged), only by requiredCrossUserVerifications()'s own
+// promotion check in skills.ts, which is a SEPARATE gate layered on top of
+// the local single-account bar, not a replacement for it.
+export type SkillStatus = 'DRAFT' | 'VERIFIED' | 'PERSONAL_NOTE' | 'REJECTED' | 'ARCHIVED' | 'CROSS_USER_CANDIDATE'
 
 export interface Skill {
   id: ID
@@ -561,6 +583,31 @@ export interface Skill {
    * is created later, per explicit user design (2026-08-21): "riconosciute,
    * verificate e poi utilizzate in quel contesto." */
   areaOfInterest?: string
+  /** Set ONLY at distillation time by the skill-training section's own edit-
+   * diff distillation call (2026-08-26, see skills.ts's distillFromEdit) --
+   * true means that call's prompt judged this skill's own content to be a
+   * genuinely generalized, topic-agnostic principle (a style/structure
+   * preference), not something tied to one exercise's specific content, per
+   * the SAME distinction point 10 of the spec makes for the free-text note
+   * ("preferGraphicalBeforeFormal: true", never the original sentence).
+   * Never set by anything else -- classifyForSharing() in skills.ts reads
+   * this alongside domainClass() rather than replacing it, because
+   * 'cheat_study' (the domain every training-section skill lives in) is
+   * itself 'content'-class by domainClass()'s existing table; this is the
+   * one narrow, explicit, inspectable override of that default, decided
+   * once by a written prompt and stored, never re-guessed later from text. */
+  sharingEligible?: boolean
+  /** Manual on/off, independent of status (2026-08-26, real user request:
+   * "permetti la possibilità di vedere queste skill personali e di
+   * attivarle o disattivarle") -- undefined/true means active, same
+   * default-on shape as every other optional boolean flag in this file, so
+   * every existing skill (created before this field existed) stays
+   * retrievable without a migration. Turning a skill off is NOT the same
+   * as REJECTED: it carries no judgment about whether the skill is good
+   * (reviewSkills() never touches this, promotion/demotion logic is
+   * unaffected), it just stops routeSkills() from retrieving it -- a
+   * reversible preference, not an evidence-based outcome. */
+  active?: boolean
   createdAt: string
   updatedAt: string
 }
@@ -588,4 +635,30 @@ export interface SkillEvent {
    * across events, instead of only suspecting it after the fact. Absent on
    * OUTCOME events (they don't make their own model call). */
   model?: string
+  /** 'organic' (real usage) vs 'training' (the dedicated skill-training
+   * section, 2026-08-26) -- undefined means organic, for every event logged
+   * before this field existed, which was never anything else. Kept distinct
+   * from `config`/`domain` on purpose: a training-section interaction still
+   * uses the real 'cheat_study' domain (same skills, same routing) -- this
+   * only marks WHERE the signal came from, for later baseline/promotion
+   * analysis that wants to tell deliberately-elicited training feedback
+   * apart from incidental real-usage feedback. */
+  source?: 'organic' | 'training'
+}
+
+/** "Forma estratta" di un file caricato nella sezione di addestramento
+ * skill (2026-08-26) -- MAI il testo/contenuto originale del file, che non
+ * viene mai persistito (vedi SkillTraining.tsx): solo una rappresentazione
+ * strutturata piccola, per economia di storage reale e una minima traccia
+ * di provenienza per ogni skill distillata da quel materiale (se una skill
+ * risulta sbagliata più avanti, si può risalire al TIPO di forma da cui
+ * viene, anche senza il contenuto originale byte per byte). */
+export interface ExtractedShape {
+  id: ID
+  materialId: ID
+  format?: string
+  hasMultipleChoice: boolean
+  diagramTypes: string[]
+  detectedPattern?: string
+  createdAt: string
 }

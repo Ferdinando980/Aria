@@ -69,6 +69,7 @@ export async function syncPushAll(
     cheatStudySolutions: import('./types').CheatStudySolution[]
     cheatStudyExercises: import('./types').CheatStudyExercise[]
     cheatStudyPrereqs: import('./types').CheatStudyPrereqSet[]
+    cheatStudyExtractedShapes: import('./types').ExtractedShape[]
     textEdits: import('./types').TextEdit[]
   },
 ): Promise<{ ok: boolean; failedTables: string[] }> {
@@ -194,6 +195,7 @@ export async function syncPushAll(
       ref: e.ref,
       outcome: e.outcome,
       model: e.model,
+      source: e.source,
     })
   }
   for (const h of data.highlights) {
@@ -228,13 +230,24 @@ export async function syncPushAll(
     pushRow('summaries', { id: s.id, user_id: userId, material_id: s.materialId, chapter_id: s.chapterId, section_id: s.sectionId, content: s.content })
   }
   for (const c of data.cheatStudySolutions) {
-    pushRow('cheat_study_solutions', { id: c.id, user_id: userId, exam_material_id: c.examMaterialId, chapter_id: c.chapterId, section_id: c.sectionId, content: c.content })
+    pushRow('cheat_study_solutions', { id: c.id, user_id: userId, exam_material_id: c.examMaterialId, chapter_id: c.chapterId, section_id: c.sectionId, content: c.content, call_event_id: c.callEventId })
   }
   for (const c of data.cheatStudyExercises) {
-    pushRow('cheat_study_exercises', { id: c.id, user_id: userId, exam_material_id: c.examMaterialId, chapter_id: c.chapterId, section_id: c.sectionId, content: c.content })
+    pushRow('cheat_study_exercises', { id: c.id, user_id: userId, exam_material_id: c.examMaterialId, chapter_id: c.chapterId, section_id: c.sectionId, content: c.content, call_event_id: c.callEventId })
   }
   for (const c of data.cheatStudyPrereqs) {
-    pushRow('cheat_study_prereqs', { id: c.id, user_id: userId, exam_material_id: c.examMaterialId, chapter_id: c.chapterId, section_id: c.sectionId, content: c.content })
+    pushRow('cheat_study_prereqs', { id: c.id, user_id: userId, exam_material_id: c.examMaterialId, chapter_id: c.chapterId, section_id: c.sectionId, content: c.content, call_event_id: c.callEventId })
+  }
+  for (const c of data.cheatStudyExtractedShapes) {
+    pushRow('cheat_study_extracted_shapes', {
+      id: c.id,
+      user_id: userId,
+      material_id: c.materialId,
+      format: c.format,
+      has_multiple_choice: c.hasMultipleChoice,
+      diagram_types: c.diagramTypes,
+      detected_pattern: c.detectedPattern,
+    })
   }
   for (const t of data.textEdits) {
     pushRow('text_edits', {
@@ -265,7 +278,7 @@ export async function syncPushAll(
 
 export async function syncPullAll(userId: string) {
   if (!supabase) return null
-  const [subjects, materials, tasks, events, profile, skills, skillEvents, highlights, chapters, flashcards, summaries, cheatStudySolutions, cheatStudyExercises, cheatStudyPrereqs, textEdits] = await Promise.all([
+  const [subjects, materials, tasks, events, profile, skills, skillEvents, highlights, chapters, flashcards, summaries, cheatStudySolutions, cheatStudyExercises, cheatStudyPrereqs, cheatStudyExtractedShapes, textEdits] = await Promise.all([
     supabase.from('subjects').select('*').eq('user_id', userId),
     supabase.from('materials').select('*').eq('user_id', userId),
     supabase.from('tasks').select('*').eq('user_id', userId),
@@ -280,6 +293,7 @@ export async function syncPullAll(userId: string) {
     supabase.from('cheat_study_solutions').select('*').eq('user_id', userId),
     supabase.from('cheat_study_exercises').select('*').eq('user_id', userId),
     supabase.from('cheat_study_prereqs').select('*').eq('user_id', userId),
+    supabase.from('cheat_study_extracted_shapes').select('*').eq('user_id', userId),
     supabase.from('text_edits').select('*').eq('user_id', userId),
   ])
   return {
@@ -297,6 +311,7 @@ export async function syncPullAll(userId: string) {
     cheatStudySolutions: cheatStudySolutions.data ?? [],
     cheatStudyExercises: cheatStudyExercises.data ?? [],
     cheatStudyPrereqs: cheatStudyPrereqs.data ?? [],
+    cheatStudyExtractedShapes: cheatStudyExtractedShapes.data ?? [],
     textEdits: textEdits.data ?? [],
   }
 }

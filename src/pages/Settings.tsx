@@ -46,7 +46,7 @@ export default function Settings() {
   const skillEvents = useAppStore((s) => s.skillEvents)
   const researchConsent = useAppStore((s) => s.profile.researchConsent ?? false)
   const setResearchConsent = useAppStore((s) => s.setResearchConsent)
-  const skillSharingConsent = useAppStore((s) => s.profile.skillSharingConsent ?? false)
+  const skillSharingConsent = useAppStore((s) => s.profile.skillSharingConsent ?? true)
   const setSkillSharingConsent = useAppStore((s) => s.setSkillSharingConsent)
   const resyncSkillsForDomainFix = useAppStore((s) => s.resyncSkillsForDomainFix)
   const [resyncing, setResyncing] = useState(false)
@@ -401,11 +401,14 @@ export default function Settings() {
           </div>
           <CardSubtitle>
             Diverso dal consenso sopra: qui si tratta del CONTENUTO delle tue skill (non solo eventi d'uso) reso
-            visibile e utilizzabile da altri account. Spento di default. Anche se acceso, solo le skill di tipo
-            "procedura" (es. come spezzare un task, come titolare un capitolo) possono mai diventare candidate — le
-            skill legate al tuo materiale specifico (chat sui materiali, appunti, piano di studio) restano sempre e
-            solo tue, a prescindere da questo interruttore. Nessuna condivisione è ancora attiva: questo interruttore
-            esiste già, pronto, ma la pipeline che lo userebbe non è ancora costruita.
+            visibile e utilizzabile da altri account. Acceso di default (come il consenso alla ricerca sopra — puoi
+            spegnerlo qui in ogni momento). Solo le skill di tipo "procedura" (es. come spezzare un task, come
+            titolare un capitolo) o quelle esplicitamente giudicate generiche dalla sezione Allenamento possono mai
+            diventare candidate — le skill legate al tuo materiale specifico (chat sui materiali, appunti, piano di
+            studio) restano sempre e solo tue, a prescindere da questo interruttore. La pipeline è reale: una skill
+            candidata si promuove solo dopo verifiche indipendenti da altri utenti CHE hanno anche loro dato questo
+            consenso (mai contate altrimenti), sopra una soglia che cresce con la base utenti — mai il contenuto
+            altrui, solo conteggi aggregati.
           </CardSubtitle>
         </Card>
 
